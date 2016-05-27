@@ -14,6 +14,7 @@
     "check": "npm run lint && npm run test:all",
     "build": "babel src --out-dir build",
     "test": "npm run test:only",
+    "test:karma": "karma start",
     "test:only": "mocha --require withDom.js --compilers js:babel-core/register --recursive test/*.js --reporter dot",
     "test:single": "mocha --require withDom.js --compilers js:babel-core/register --watch --reporter dot",
     "test:watch": "mocha --require withDom.js --compilers js:babel-core/register --recursive test/*.js --watch --reporter dot",
@@ -79,9 +80,15 @@
     "gitbook-cli": "^1.0.1",
     "istanbul": "^1.0.0-alpha.2",
     "jsdom": "^6.1.0",
+    "json-loader": "^0.5.4",
+    "karma": "^0.13.22",
+    "karma-chrome-launcher": "^1.0.1",
+    "karma-mocha": "^1.0.1",
+    "karma-webpack": "^1.7.0",
     "mocha": "^2.5.3",
     "rimraf": "^2.5.2",
-    "sinon": "^1.17.4"
+    "sinon": "^1.17.4",
+    "webpack": "^1.13.1"
   },
   "peerDependencies": {
     "react": "0.13.x || 0.14.x || ^15.0.0-0"
