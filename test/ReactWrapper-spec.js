@@ -2399,25 +2399,27 @@ describeWithDOM('mount', () => {
         }
       }
       const div = global.document.createElement('div');
+
+      const initialBodyChildren = document.body.childNodes.length;
       global.document.body.appendChild(div);
 
-      expect(document.body.childNodes).to.have.length(1);
+      expect(document.body.childNodes).to.have.length(initialBodyChildren + 1);
       expect(div.childNodes).to.have.length(0);
 
       const wrapper = mount(<Foo />, { attachTo: div });
 
       expect(wrapper.find('.in-foo')).to.have.length(1);
-      expect(document.body.childNodes).to.have.length(1);
+      expect(document.body.childNodes).to.have.length(initialBodyChildren + 1);
       expect(div.childNodes).to.have.length(1);
 
       wrapper.detach();
 
-      expect(document.body.childNodes).to.have.length(1);
+      expect(document.body.childNodes).to.have.length(initialBodyChildren + 1);
       expect(div.childNodes).to.have.length(0);
 
       global.document.body.removeChild(div);
 
-      expect(document.body.childNodes).to.have.length(0);
+      expect(document.body.childNodes).to.have.length(initialBodyChildren);
       expect(div.childNodes).to.have.length(0);
     });
 
@@ -2434,15 +2436,17 @@ describeWithDOM('mount', () => {
       }
       let wrapper;
       const div = global.document.createElement('div');
+
+      const initialBodyChildren = document.body.childNodes.length;
       global.document.body.appendChild(div);
 
-      expect(document.body.childNodes).to.have.length(1);
+      expect(document.body.childNodes).to.have.length(initialBodyChildren + 1);
       expect(div.childNodes).to.have.length(0);
 
       wrapper = mount(<Foo />, { attachTo: div });
 
       expect(wrapper.find('.in-foo')).to.have.length(1);
-      expect(document.body.childNodes).to.have.length(1);
+      expect(document.body.childNodes).to.have.length(initialBodyChildren + 1);
       expect(div.childNodes).to.have.length(1);
 
       wrapper.detach();
@@ -2450,17 +2454,17 @@ describeWithDOM('mount', () => {
       wrapper = mount(<Bar />, { attachTo: div });
 
       expect(wrapper.find('.in-bar')).to.have.length(1);
-      expect(document.body.childNodes).to.have.length(1);
+      expect(document.body.childNodes).to.have.length(initialBodyChildren + 1);
       expect(div.childNodes).to.have.length(1);
 
       wrapper.detach();
 
-      expect(document.body.childNodes).to.have.length(1);
+      expect(document.body.childNodes).to.have.length(initialBodyChildren + 1);
       expect(div.childNodes).to.have.length(0);
 
       global.document.body.removeChild(div);
 
-      expect(document.body.childNodes).to.have.length(0);
+      expect(document.body.childNodes).to.have.length(initialBodyChildren);
       expect(div.childNodes).to.have.length(0);
     });
 
