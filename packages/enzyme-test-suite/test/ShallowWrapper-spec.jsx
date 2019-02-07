@@ -30,6 +30,7 @@ import {
   Fragment,
   forwardRef,
   PureComponent,
+  useState,
 } from './_helpers/react-compat';
 import {
   describeIf,
@@ -1523,6 +1524,35 @@ describe('shallow', () => {
         const wrapper = shallow(<Foo />);
         expect(wrapper.find(Component)).to.have.lengthOf(2);
         expect(wrapper.find(Component.displayName)).to.have.lengthOf(2);
+      });
+    });
+
+    describeIf(is('>= 16.8'), 'hooks', () => {
+      it('handles useState', () => {
+        const ComponentUsingStateHook = () => {
+          const [count] = useState(0);
+          return <div>{count}</div>;
+        };
+
+        const wrapper = shallow(<ComponentUsingStateHook />);
+
+        expect(wrapper.find('div').length).to.equal(1);
+        expect(wrapper.find('div').text()).to.equal('0');
+      });
+
+      it('handles setState returned from useState', () => {
+        const ComponentUsingStateHook = () => {
+          const [count, setCount] = useState(0);
+          return <div onClick={() => setCount(count + 1)}>{count}</div>;
+        };
+
+        const wrapper = shallow(<ComponentUsingStateHook />);
+        const div = wrapper.find('div');
+        const setCount = div.prop('onClick');
+        setCount();
+        wrapper.update();
+
+        expect(wrapper.find('div').text()).to.equal('1');
       });
     });
 
