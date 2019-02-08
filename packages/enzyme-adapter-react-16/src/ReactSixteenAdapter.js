@@ -357,7 +357,7 @@ class ReactSixteenAdapter extends EnzymeAdapter {
     let isDOM = false;
     let cachedNode = null;
     let cachedComponent = null;
-    let wrappedEl;
+    let wrappedEl = null;
     return {
       render(el, unmaskedContext) {
         cachedNode = el;
