@@ -356,6 +356,8 @@ class ReactSixteenAdapter extends EnzymeAdapter {
     const renderer = new ShallowRenderer();
     let isDOM = false;
     let cachedNode = null;
+    let cachedComponent = null;
+    let wrappedEl;
     return {
       render(el, unmaskedContext) {
         cachedNode = el;
@@ -373,10 +375,13 @@ class ReactSixteenAdapter extends EnzymeAdapter {
 
           const context = getMaskedContext(Component.contextTypes, unmaskedContext);
           if (!isStateful && typeof Component === 'function') {
-            const wrappedEl = Object.assign(
-              (...args) => Component(...args), // eslint-disable-line new-cap
-              Component,
-            );
+            if (Component !== cachedComponent) {
+              wrappedEl = Object.assign(
+                (...args) => Component(...args), // eslint-disable-line new-cap
+                Component,
+              );
+              cachedComponent = Component;
+            }
             return withSetStateAllowed(() => renderer.render({ ...el, type: wrappedEl }, context));
           }
           if (isStateful) {
