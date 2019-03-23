@@ -426,11 +426,11 @@ class ReactSixteenAdapter extends EnzymeAdapter {
 
           if (!isStateful && isMemo(el.type)) {
             const InnerComp = el.type.type;
-            const wrappedEl = Object.assign(
+            const wrappedMemoEl = Object.assign(
               (...args) => InnerComp(...args), // eslint-disable-line new-cap
               InnerComp,
             );
-            return withSetStateAllowed(() => renderer.render({ ...el, type: wrappedEl }, context));
+            return withSetStateAllowed(() => renderer.render({ ...el, type: wrappedMemoEl }, context));
           }
 
           if (!isStateful && typeof Component === 'function') {
@@ -443,6 +443,7 @@ class ReactSixteenAdapter extends EnzymeAdapter {
             }
             return withSetStateAllowed(() => renderer.render({ ...el, type: wrappedEl }, context));
           }
+
           if (isStateful) {
             // fix react bug; see implementation of `getEmptyStateValue`
             const emptyStateValue = getEmptyStateValue();
@@ -478,6 +479,7 @@ class ReactSixteenAdapter extends EnzymeAdapter {
           return elementToTree(cachedNode);
         }
         const output = renderer.getRenderOutput();
+        console.log('NODE', isDOM, output);
         return {
           nodeType: nodeTypeFromType(cachedNode.type),
           type: cachedNode.type,
