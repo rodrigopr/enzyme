@@ -662,7 +662,7 @@ describe('shallow', () => {
     });
   });
 
-  describeIf(is('>= 16.8'), 'hooks', () => {
+  describeIf(is('>= 16.8.5'), 'hooks', () => {
     // TODO: enable when the shallow renderer fixes its bug
     it.skip('works with `useEffect`', (done) => {
       function ComponentUsingEffectHook() {
@@ -1596,12 +1596,26 @@ describe('shallow', () => {
         };
 
         const wrapper = shallow(<ComponentUsingStateHook />);
-        const div = wrapper.find('div');
-        const setCount = div.prop('onClick');
-        setCount();
-        wrapper.update();
+        wrapper.simulate('click');
 
         expect(wrapper.find('div').text()).to.equal('1');
+      });
+
+      it('handles keep hook state for same component type', () => {
+        const ComponentUsingStateHook = () => {
+          const [count, setCount] = useState(0);
+          return <div onClick={() => setCount(count + 1)}>{count}</div>;
+        };
+
+        const wrapper = shallow(<ComponentUsingStateHook />);
+        wrapper.simulate('click');
+        expect(wrapper.find('div').text()).to.equal('1');
+
+        wrapper.setProps({ newProp: 1 });
+        expect(wrapper.find('div').text()).to.equal('1');
+
+        wrapper.simulate('click');
+        expect(wrapper.find('div').text()).to.equal('2');
       });
     });
 
