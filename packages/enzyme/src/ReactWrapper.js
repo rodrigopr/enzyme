@@ -23,6 +23,8 @@ import {
   childrenOfNode,
   parentsOfNode,
   treeFilter,
+  getTextFromHostNodes,
+  getHTMLFromHostNodes,
 } from './RSTTraversal';
 
 import { buildPredicate, reduceTreesBySelector } from './selectors';
@@ -574,22 +576,7 @@ class ReactWrapper {
    */
   text() {
     const adapter = getAdapter(this[OPTIONS]);
-    return this.single('text', (n) => {
-      const node = adapter.nodeToHostNode(n, true);
-      if (!node) {
-        return typeof n === 'string' ? n : node;
-      }
-
-      const nodeArray = Array.isArray(node) ? node : [node];
-      const textContent = nodeArray.map((item) => {
-        if (!item) {
-          return '';
-        }
-        return item.textContent || '';
-      });
-
-      return textContent.join('');
-    });
+    return this.single('text', n => getTextFromHostNodes(n, adapter));
   }
 
   /**
@@ -600,21 +587,8 @@ class ReactWrapper {
    * @returns {String}
    */
   html() {
-    return this.single('html', (n) => {
-      if (n === null) return null;
-      const adapter = getAdapter(this[OPTIONS]);
-      const node = adapter.nodeToHostNode(n, true);
-
-      if (node === null) return null;
-
-      const nodeArray = Array.isArray(node) ? node : [node];
-      const nodesHTML = nodeArray.map(item => (item === null
-        ? null
-        : item.outerHTML.replace(/\sdata-(reactid|reactroot)+="([^"]*)+"/g, '')
-      ));
-
-      return nodesHTML.join('');
-    });
+    const adapter = getAdapter(this[OPTIONS]);
+    return this.single('html', n => getHTMLFromHostNodes(n, adapter));
   }
 
   /**
@@ -696,7 +670,8 @@ class ReactWrapper {
    * @returns {*}
    */
   state(name) {
-    if (this.instance() === null || this[RENDERER].getNode().nodeType !== 'class') {
+    const thisNode = this[ROOT] === this ? this[RENDERER].getNode() : this.getNodeInternal();
+    if (this.instance() === null || thisNode.nodeType !== 'class') {
       throw new Error('ReactWrapper::state() can only be called on class components');
     }
     const _state = this.single('state', () => this.instance().state);
@@ -880,7 +855,7 @@ class ReactWrapper {
    * @returns {Boolean}
    */
   hasClass(className) {
-    if (className && className.indexOf('.') !== -1) {
+    if (typeof className === 'string' && className.indexOf('.') !== -1) {
       // eslint-disable-next-line no-console
       console.warn('It looks like you\'re calling `ReactWrapper::hasClass()` with a CSS selector. hasClass() expects a class name, not a CSS selector.');
     }

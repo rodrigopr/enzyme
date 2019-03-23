@@ -9,8 +9,9 @@ import {
   shallow,
   render,
   ShallowWrapper,
-  mount,
 } from 'enzyme';
+import shallowEntry from 'enzyme/shallow';
+import ShallowWrapperEntry from 'enzyme/ShallowWrapper';
 import {
   ITERATOR_SYMBOL,
   withSetStateAllowed,
@@ -29,7 +30,9 @@ import {
   createRef,
   Fragment,
   forwardRef,
+  memo,
   PureComponent,
+  useEffect,
   useState,
 } from './_helpers/react-compat';
 import {
@@ -57,6 +60,11 @@ const getElementPropSelector = prop => x => x.props[prop];
 const getWrapperPropSelector = prop => x => x.prop(prop);
 
 describe('shallow', () => {
+  describe('top level entry points', () => {
+    expect(shallowEntry).to.equal(shallow);
+    expect(ShallowWrapperEntry).to.equal(ShallowWrapper);
+  });
+
   describe('top level wrapper', () => {
     it('does what i expect', () => {
       class Box extends React.Component {
@@ -85,6 +93,13 @@ describe('shallow', () => {
       expect(wrapper.find(Box).children().props().className).to.equal('div');
       expect(wrapper.children().type()).to.equal('div');
       expect(wrapper.children().props().bam).to.equal(undefined);
+    });
+
+    it('works with numeric literals', () => {
+      const wrapper = shallow(<div>{50}</div>);
+      expect(wrapper.debug()).to.equal(`<div>
+  50
+</div>`);
     });
 
     describe('wrapping invalid elements', () => {
@@ -242,7 +257,7 @@ describe('shallow', () => {
       expect(wrapper.find('.child2')).to.have.lengthOf(1);
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('can pass in context', () => {
         const SimpleComponent = (props, context) => (
           <div>{context.name}</div>
@@ -269,6 +284,7 @@ describe('shallow', () => {
         );
         SimpleComponent.contextTypes = { name: PropTypes.string };
 
+        const context = { name: 'foo' };
         const wrapper = shallow(<SimpleComponent />, { context });
 
         expect(wrapper.context().name).to.equal(context.name);
@@ -646,6 +662,39 @@ describe('shallow', () => {
     });
   });
 
+  describeIf(is('>= 16.8'), 'hooks', () => {
+    // TODO: enable when the shallow renderer fixes its bug
+    it.skip('works with `useEffect`', (done) => {
+      function ComponentUsingEffectHook() {
+        const [ctr, setCtr] = useState(0);
+        useEffect(() => {
+          setCtr(1);
+          setTimeout(() => {
+            setCtr(2);
+          }, 1e3);
+        }, []);
+        return (
+          <div>
+            {ctr}
+          </div>
+        );
+      }
+      const wrapper = shallow(<ComponentUsingEffectHook />);
+
+      expect(wrapper.debug()).to.equal(`<div>
+  1
+</div>`);
+
+      setTimeout(() => {
+        wrapper.update();
+        expect(wrapper.debug()).to.equal(`<div>
+  2
+</div>`);
+        done();
+      }, 1e3);
+    });
+  });
+
   describe('.contains(node)', () => {
     it('allows matches on the root node', () => {
       const a = <div className="foo" />;
@@ -742,15 +791,15 @@ describe('shallow', () => {
 
       expect(() => wrapper.contains({})).to.throw(
         Error,
-        'ShallowWrapper::contains() can only be called with ReactElement (or array of them), string or number as argument.', // eslint-disable-line max-len
+        'ShallowWrapper::contains() can only be called with a ReactElement (or an array of them), a string, or a number as an argument.',
       );
       expect(() => wrapper.contains(() => ({}))).to.throw(
         Error,
-        'ShallowWrapper::contains() can only be called with ReactElement (or array of them), string or number as argument.', // eslint-disable-line max-len
+        'ShallowWrapper::contains() can only be called with a ReactElement (or an array of them), a string, or a number as an argument.',
       );
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('matches composite components', () => {
         function Foo() {
           return <div />;
@@ -1320,7 +1369,7 @@ describe('shallow', () => {
       expect(wrapper.find('[data-foo="bar  baz quz"]')).to.have.lengthOf(0);
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('finds a component based on a constructor', () => {
         const Foo = () => (
           <div />
@@ -1579,6 +1628,94 @@ describe('shallow', () => {
         });
       });
     });
+
+    describeIf(is('>= 16.6'), 'React.memo', () => {
+      it('works with an SFC', () => {
+        const InnerComp = () => <div><span>Hello</span></div>;
+        const InnerFoo = ({ foo }) => (
+          <div>
+            <InnerComp />
+            <div className="bar">bar</div>
+            <div className="qoo">{foo}</div>
+          </div>
+        );
+        const Foo = memo(InnerFoo);
+
+        const wrapper = shallow(<Foo foo="qux" />);
+        expect(wrapper.debug()).to.equal(`<div>
+  <InnerComp />
+  <div className="bar">
+    bar
+  </div>
+  <div className="qoo">
+    qux
+  </div>
+</div>`);
+        expect(wrapper.find('InnerComp')).to.have.lengthOf(1);
+        expect(wrapper.find('.bar')).to.have.lengthOf(1);
+        expect(wrapper.find('.qoo').text()).to.equal('qux');
+      });
+
+      it('throws with a class component', () => {
+        class InnerComp extends React.Component {
+          render() {
+            return <div><span>Hello</span></div>;
+          }
+        }
+
+        class Foo extends React.Component {
+          render() {
+            const { foo } = this.props;
+            return (
+              <div>
+                <InnerComp />
+                <div className="bar">bar</div>
+                <div className="qoo">{foo}</div>
+              </div>
+            );
+          }
+        }
+        const FooMemo = memo(Foo);
+
+        expect(() => shallow(<FooMemo foo="qux" />)).to.throw(TypeError);
+      });
+
+      it.skip('works with a class component', () => {
+        class InnerComp extends React.Component {
+          render() {
+            return <div><span>Hello</span></div>;
+          }
+        }
+
+        class Foo extends React.Component {
+          render() {
+            const { foo } = this.props;
+            return (
+              <div>
+                <InnerComp />
+                <div className="bar">bar</div>
+                <div className="qoo">{foo}</div>
+              </div>
+            );
+          }
+        }
+        const FooMemo = memo(Foo);
+
+        const wrapper = shallow(<FooMemo foo="qux" />);
+        expect(wrapper.debug()).to.equal(`<div>
+  <InnerComp />
+  <div className="bar">
+    bar
+  </div>
+  <div className="qoo">
+    qux
+  </div>
+</div>`);
+        expect(wrapper.find('InnerComp')).to.have.lengthOf(1);
+        expect(wrapper.find('.bar')).to.have.lengthOf(1);
+        expect(wrapper.find('.qoo').text()).to.equal('qux');
+      });
+    });
   });
 
   describe('.findWhere(predicate)', () => {
@@ -1785,17 +1922,15 @@ describe('shallow', () => {
       }
 
       const content = 'blah';
-      const wrapper = mount(<Foo data={content} />);
+      const wrapper = shallow(<Foo data={content} />);
       expect(wrapper.debug()).to.equal((
-        `<Foo data="${content}">
-  <div data-foo="${content}">
-    Test Component
-  </div>
-</Foo>`
+        `<div data-foo="${content}">
+  Test Component
+</div>`
       ));
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('finds nodes', () => {
         const SFC = function SFC({ selector }) {
           return (
@@ -2400,8 +2535,8 @@ describe('shallow', () => {
       ]);
     });
 
-    describe('setProps should not call componentDidUpdate twice', () => {
-      it('first test case', () => {
+    describe('setProps does not call componentDidUpdate twice', () => {
+      it('when setState is called in cWRP', () => {
         class Dummy extends React.Component {
           constructor(...args) {
             super(...args);
@@ -2440,7 +2575,7 @@ describe('shallow', () => {
       });
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('sets props for a component multiple times', () => {
         const Foo = props => (
           <div className={props.id}>
@@ -2621,7 +2756,7 @@ describe('shallow', () => {
       expect(spy.args[0][1]).to.equal(b);
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('simulates events', () => {
         const spy = sinon.spy();
         const Foo = props => (
@@ -2997,7 +3132,7 @@ describe('shallow', () => {
           expect(wrapper.state()).to.eql({ id: 'bar' });
           expect(this).to.equal(wrapper.instance());
           expect(this.state).to.eql({ id: 'bar' });
-          expect(wrapper.find('div').prop('className')).to.eql('bar');
+          expect(wrapper.find('div').prop('className')).to.equal('bar');
           expect(args).to.eql(CALLING_SETSTATE_CALLBACK_WITH_UNDEFINED ? [undefined] : []);
           resolve();
         });
@@ -3146,7 +3281,7 @@ describe('shallow', () => {
       });
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('throws when trying to access state', () => {
         const Foo = () => (
           <div>abc</div>
@@ -3274,28 +3409,47 @@ describe('shallow', () => {
         }
       }
 
-      it('sets the state of the parent', () => {
+      it('sets the state of a stateful root', () => {
         const wrapper = shallow(<Parent />);
 
-        expect(wrapper.debug()).to.eql('<Child prop={1} />');
+        expect(wrapper.debug()).to.equal('<Child prop={1} />');
 
         return new Promise((resolve) => {
           wrapper.setState({ childProp: 2 }, () => {
-            expect(wrapper.debug()).to.eql('<Child prop={2} />');
+            expect(wrapper.debug()).to.equal('<Child prop={2} />');
             resolve();
           });
         });
       });
 
-      it('can not set the state of the child', () => {
+      it('can not set the state of the stateful child of a stateful root', () => {
         const wrapper = shallow(<Parent />);
 
-        expect(wrapper.debug()).to.eql('<Child prop={1} />');
+        expect(wrapper.debug()).to.equal('<Child prop={1} />');
 
-        expect(() => wrapper.find(Child).setState({ state: 'b' })).to.throw(
+        const child = wrapper.find(Child);
+        expect(() => child.setState({ state: 'b' })).to.throw(
           Error,
           'ShallowWrapper::setState() can only be called on the root',
         );
+      });
+
+      describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
+        function SFC(props) {
+          return <Parent {...props} />;
+        }
+
+        it('can not set the state of the stateful child of a stateless root', () => {
+          const wrapper = shallow(<SFC />);
+
+          expect(wrapper.text().trim()).to.equal('<Parent />');
+
+          const child = wrapper.find(Child);
+          expect(() => child.setState({ state: 'b' })).to.throw(
+            Error,
+            'ShallowWrapper::setState() can only be called on the root',
+          );
+        });
       });
     });
   });
@@ -3400,7 +3554,7 @@ describe('shallow', () => {
       });
 
       itIf(is('>= 16'), 'returns false for multiple nested elements that all return null', () => {
-        const wrapper = mount((
+        const wrapper = shallow((
           <RenderChildren>
             <RenderNull />
             <RenderChildren>
@@ -3464,7 +3618,7 @@ describe('shallow', () => {
       expect(wrapper.isEmptyRender()).to.equal(false);
     });
 
-    describeIf(is('>=15 || ^16.0.0-alpha'), 'stateless function components', () => {
+    describeIf(is('>=15 || ^16.0.0-alpha'), 'stateless function components (SFCs)', () => {
       itWithData(emptyRenderValues, 'when a component returns: ', (data) => {
         function Foo() {
           return data.value;
@@ -3667,7 +3821,7 @@ describe('shallow', () => {
       ]);
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('handles nodes with mapped children', () => {
         const Foo = props => (
           <div>
@@ -3754,6 +3908,26 @@ describe('shallow', () => {
         expect(constWrapper.text()).to.include('Foo');
         expect(constWrapper.text()).to.include('Bar');
       });
+
+      it('works with a nested component', () => {
+        const Title = ({ children }) => <span>{children}</span>;
+        const Foobar = () => (
+          <Fragment>
+            <Title>Foo</Title>
+            <Fragment>Bar</Fragment>
+          </Fragment>
+        );
+
+        const wrapper = shallow(<Foobar />);
+        const text = wrapper.text();
+        expect(wrapper.debug()).to.equal(`<Fragment>
+  <Title>
+    Foo
+  </Title>
+  Bar
+</Fragment>`);
+        expect(text).to.equal('<Title />Bar');
+      });
     });
   });
 
@@ -3800,7 +3974,7 @@ describe('shallow', () => {
       expect(wrapper.props()).to.eql({ className: 'bye', id: 'hi' });
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('returns props of root rendered node', () => {
         const Foo = ({ bar, foo }) => (
           <div className={bar} id={foo} />
@@ -3902,7 +4076,7 @@ describe('shallow', () => {
       expect(wrapper.prop('bar')).to.equal(undefined);
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('returns props of root rendered node', () => {
         const Foo = ({ bar, foo }) => (
           <div className={bar} id={foo} />
@@ -3918,7 +4092,7 @@ describe('shallow', () => {
     });
   });
 
-  describe('.state(name)', () => {
+  describe('.state([name])', () => {
     it('returns the state object', () => {
       class Foo extends React.Component {
         constructor(props) {
@@ -3976,7 +4150,7 @@ describe('shallow', () => {
       expect(() => wrapper.state()).to.throw(Error, 'ShallowWrapper::state() can only be called on class components');
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('throws on SFCs', () => {
         function Foo() {
           return <div />;
@@ -4017,16 +4191,30 @@ describe('shallow', () => {
         }
       }
 
-      it('gets the state of the parent', () => {
+      it('gets the state of a stateful parent', () => {
         const wrapper = shallow(<Parent />);
 
         expect(wrapper.state()).to.eql({ childProp: 1 });
       });
 
-      it('can not get the state of the child', () => {
+      it('can not get the state of the stateful child of a stateful root', () => {
         const wrapper = shallow(<Parent />);
 
-        expect(() => wrapper.find(Child).state()).to.throw(Error, 'ShallowWrapper::state() can only be called on the root');
+        const child = wrapper.find(Child);
+        expect(() => child.state()).to.throw(Error, 'ShallowWrapper::state() can only be called on the root');
+      });
+
+      describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
+        function StatelessParent(props) {
+          return <Child {...props} />;
+        }
+
+        it('can not get the state of the stateful child of a stateless root', () => {
+          const wrapper = shallow(<StatelessParent />);
+
+          const child = wrapper.find(Child);
+          expect(() => child.state()).to.throw(Error, 'ShallowWrapper::state() can only be called on the root');
+        });
       });
     });
   });
@@ -4129,7 +4317,7 @@ describe('shallow', () => {
       expect(children.at(1).hasClass('baz')).to.equal(true);
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('handles mixed children with and without arrays', () => {
         const Foo = props => (
           <div>
@@ -4470,6 +4658,65 @@ describe('shallow', () => {
   });
 
   describe('.hasClass(className)', () => {
+    context('when using a DOM component', () => {
+      it('returns whether or not node has a certain class', () => {
+        const wrapper = shallow(<div className="foo bar baz some-long-string FoOo" />);
+
+        expect(wrapper.hasClass('foo')).to.equal(true);
+        expect(wrapper.hasClass('bar')).to.equal(true);
+        expect(wrapper.hasClass('baz')).to.equal(true);
+        expect(wrapper.hasClass('some-long-string')).to.equal(true);
+        expect(wrapper.hasClass('FoOo')).to.equal(true);
+        expect(wrapper.hasClass('doesnt-exist')).to.equal(false);
+      });
+    });
+
+    describeIf(is('> 0.13'), 'with stateless function components (SFCs)', () => {
+      it('returns whether or not node has a certain class', () => {
+        const Foo = () => <main><div className="foo bar baz some-long-string FoOo" /></main>;
+        const wrapper = shallow(<Foo />);
+
+        expect(wrapper.hasClass('foo')).to.equal(false);
+        expect(wrapper.hasClass('bar')).to.equal(false);
+        expect(wrapper.hasClass('baz')).to.equal(false);
+        expect(wrapper.hasClass('some-long-string')).to.equal(false);
+        expect(wrapper.hasClass('FoOo')).to.equal(false);
+        expect(wrapper.hasClass('doesnt-exist')).to.equal(false);
+
+        expect(wrapper.children().hasClass('foo')).to.equal(true);
+        expect(wrapper.children().hasClass('bar')).to.equal(true);
+        expect(wrapper.children().hasClass('baz')).to.equal(true);
+        expect(wrapper.children().hasClass('some-long-string')).to.equal(true);
+        expect(wrapper.children().hasClass('FoOo')).to.equal(true);
+        expect(wrapper.children().hasClass('doesnt-exist')).to.equal(false);
+      });
+    });
+
+    context('when using a Composite class component', () => {
+      it('returns whether or not node has a certain class', () => {
+        class Foo extends React.Component {
+          render() {
+            return (<main><div className="foo bar baz some-long-string FoOo" /></main>);
+          }
+        }
+        const wrapper = shallow(<Foo />);
+
+        expect(wrapper.hasClass('foo')).to.equal(false);
+        expect(wrapper.hasClass('bar')).to.equal(false);
+        expect(wrapper.hasClass('baz')).to.equal(false);
+        expect(wrapper.hasClass('some-long-string')).to.equal(false);
+        expect(wrapper.hasClass('FoOo')).to.equal(false);
+        expect(wrapper.hasClass('doesnt-exist')).to.equal(false);
+
+        expect(wrapper.children().hasClass('foo')).to.equal(true);
+        expect(wrapper.children().hasClass('bar')).to.equal(true);
+        expect(wrapper.children().hasClass('baz')).to.equal(true);
+        expect(wrapper.children().hasClass('some-long-string')).to.equal(true);
+        expect(wrapper.children().hasClass('FoOo')).to.equal(true);
+        expect(wrapper.children().hasClass('doesnt-exist')).to.equal(false);
+      });
+    });
+
     it('returns whether or not node has a certain class', () => {
       const wrapper = shallow((
         <div className="foo bar baz some-long-string FoOo" />
@@ -4483,14 +4730,49 @@ describe('shallow', () => {
       expect(wrapper.hasClass('doesnt-exist')).to.equal(false);
     });
 
+    context('when using a Composite component that renders null', () => {
+      it('returns whether or not node has a certain class', () => {
+        class Foo extends React.Component {
+          render() {
+            return null;
+          }
+        }
+        const wrapper = shallow(<Foo />);
+
+        expect(wrapper.hasClass('foo')).to.equal(false);
+      });
+    });
+
     it('works with a non-string `className` prop', () => {
       class Foo extends React.Component {
         render() {
-          return <Foo {...this.props} />;
+          return <div {...this.props} />;
         }
       }
-      const wrapper = shallow(<Foo className={{ classA: true, classB: false }} />);
+      const obj = { classA: true, classB: false };
+      const wrapper = shallow(<Foo className={obj} />);
       expect(wrapper.hasClass('foo')).to.equal(false);
+      expect(wrapper.hasClass('classA')).to.equal(false);
+      expect(wrapper.hasClass('classB')).to.equal(false);
+      expect(wrapper.hasClass(String(obj))).to.equal(true);
+    });
+
+    it('allows hyphens', () => {
+      const wrapper = shallow(<div className="foo-bar" />);
+      expect(wrapper.hasClass('foo-bar')).to.equal(true);
+    });
+
+    it('works if className has a function in toString property', () => {
+      function classes() {}
+      classes.toString = () => 'foo-bar';
+      const wrapper = shallow(<div className={classes} />);
+      expect(wrapper.hasClass('foo-bar')).to.equal(true);
+    });
+
+    it('works if searching with a RegExp', () => {
+      const wrapper = shallow(<div className="ComponentName-classname-123" />);
+      expect(wrapper.hasClass(/(ComponentName)-(classname)-(\d+)/)).to.equal(true);
+      expect(wrapper.hasClass(/(ComponentName)-(other)-(\d+)/)).to.equal(false);
     });
   });
 
@@ -4983,7 +5265,7 @@ describe('shallow', () => {
       });
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('returns a shallow rendered instance of the current node', () => {
         const Bar = () => (
           <div>
@@ -5289,7 +5571,7 @@ describe('shallow', () => {
       ));
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('renders out nested composite components', () => {
         const Foo = () => (
           <div className="in-foo" />
@@ -5329,6 +5611,27 @@ describe('shallow', () => {
         </Fragment>
       );
 
+      class ClassChild extends React.Component {
+        render() {
+          return <div>Class child</div>;
+        }
+      }
+
+      function SFCChild() {
+        return <div>SFC child</div>;
+      }
+
+      class FragmentWithCustomChildClass extends React.Component {
+        render() {
+          return (
+            <Fragment>
+              <ClassChild />
+              <SFCChild />
+            </Fragment>
+          );
+        }
+      }
+
       it('correctly renders html for both children for class', () => {
         const classWrapper = shallow(<FragmentClassExample />);
         expect(classWrapper.html()).to.equal('<div><span>Foo</span></div><div><span>Bar</span></div>');
@@ -5337,6 +5640,11 @@ describe('shallow', () => {
       it('correctly renders html for both children for const', () => {
         const constWrapper = shallow(<FragmentConstExample />);
         expect(constWrapper.html()).to.equal('<div><span>Foo</span></div><div><span>Bar</span></div>');
+      });
+
+      it('correctly renders html for custom component children', () => {
+        const withChildrenWrapper = shallow(<FragmentWithCustomChildClass />);
+        expect(withChildrenWrapper.html()).to.equal('<div>Class child</div><div>SFC child</div>');
       });
     });
   });
@@ -5423,51 +5731,10 @@ describe('shallow', () => {
     });
   });
 
-  describe('.renderProp()', () => {
-    it('returns a wrapper around the node returned from the render prop', () => {
-      class Foo extends React.Component {
-        render() {
-          return <div className="in-foo" />;
-        }
-      }
-      class Bar extends React.Component {
-        render() {
-          const { render: r } = this.props;
-          return <div className="in-bar">{r()}</div>;
-        }
-      }
-
-      const wrapperA = shallow(<div><Bar render={() => <div><Foo /></div>} /></div>);
-      const renderPropWrapperA = wrapperA.find(Bar).renderProp('render')();
-      expect(renderPropWrapperA.find(Foo)).to.have.lengthOf(1);
-
-      const wrapperB = shallow(<div><Bar render={() => <Foo />} /></div>);
-      const renderPropWrapperB = wrapperB.find(Bar).renderProp('render')();
-      expect(renderPropWrapperB.find(Foo)).to.have.lengthOf(1);
-
-      const stub = sinon.stub().returns(<div />);
-      const wrapperC = shallow(<div><Bar render={stub} /></div>);
-      stub.resetHistory();
-      wrapperC.find(Bar).renderProp('render')('one', 'two');
-      expect(stub.args).to.deep.equal([['one', 'two']]);
-    });
-
-    it('throws on host elements', () => {
-      class Div extends React.Component {
-        render() {
-          const { children } = this.props;
-          return <div>{children}</div>;
-        }
-      }
-
-      const wrapper = shallow(<Div />);
-      expect(wrapper.is('div')).to.equal(true);
-      expect(() => wrapper.renderProp('foo')).to.throw();
-    });
-
-    wrap()
-      .withOverride(() => getAdapter(), 'wrap', () => undefined)
-      .it('throws with a react adapter that lacks a `.wrap`', () => {
+  wrap()
+    .withConsoleThrows()
+    .describe('.renderProp()', () => {
+      it('returns a wrapper around the node returned from the render prop', () => {
         class Foo extends React.Component {
           render() {
             return <div className="in-foo" />;
@@ -5480,10 +5747,103 @@ describe('shallow', () => {
           }
         }
 
-        const wrapper = shallow(<div><Bar render={() => <div><Foo /></div>} /></div>);
-        expect(() => wrapper.find(Bar).renderProp('render')).to.throw(RangeError);
+        const wrapperA = shallow(<div><Bar render={() => <div><Foo /></div>} /></div>);
+        const renderPropWrapperA = wrapperA.find(Bar).renderProp('render')();
+        expect(renderPropWrapperA.find(Foo)).to.have.lengthOf(1);
+
+        const wrapperB = shallow(<div><Bar render={() => <Foo />} /></div>);
+        const renderPropWrapperB = wrapperB.find(Bar).renderProp('render')();
+        expect(renderPropWrapperB.find(Foo)).to.have.lengthOf(1);
+
+        const stub = sinon.stub().returns(<div />);
+        const wrapperC = shallow(<div><Bar render={stub} /></div>);
+        stub.resetHistory();
+        wrapperC.find(Bar).renderProp('render')('one', 'two');
+        expect(stub.args).to.deep.equal([['one', 'two']]);
       });
-  });
+
+      it('throws on host elements', () => {
+        class Div extends React.Component {
+          render() {
+            const { children } = this.props;
+            return <div>{children}</div>;
+          }
+        }
+
+        const wrapper = shallow(<Div />);
+        expect(wrapper.is('div')).to.equal(true);
+        expect(() => wrapper.renderProp('foo')).to.throw();
+      });
+
+      wrap()
+        .withOverride(() => getAdapter(), 'wrap', () => undefined)
+        .it('throws with a react adapter that lacks a `.wrap`', () => {
+          class Foo extends React.Component {
+            render() {
+              return <div className="in-foo" />;
+            }
+          }
+          class Bar extends React.Component {
+            render() {
+              const { render: r } = this.props;
+              return <div className="in-bar">{r()}</div>;
+            }
+          }
+
+          const wrapper = shallow(<div><Bar render={() => <div><Foo /></div>} /></div>);
+          expect(() => wrapper.find(Bar).renderProp('render')).to.throw(RangeError);
+        });
+
+      describeIf(is('>= 16'), 'allows non-nodes', () => {
+        function MyComponent({ val }) {
+          return <ComponentWithRenderProp val={val} r={x => x} />;
+        }
+
+        function ComponentWithRenderProp({ val, r }) {
+          return r(val);
+        }
+
+        it('works with strings', () => {
+          const wrapper = shallow(<MyComponent val="foo" />);
+
+          wrapper.find(ComponentWithRenderProp).renderProp('r')('foo');
+
+          wrapper.find(ComponentWithRenderProp).renderProp('r')('');
+        });
+
+        it('works with numbers', () => {
+          const wrapper = shallow(<MyComponent val={42} />);
+
+          wrapper.find(ComponentWithRenderProp).renderProp('r')(42);
+
+          wrapper.find(ComponentWithRenderProp).renderProp('r')(0);
+
+          wrapper.find(ComponentWithRenderProp).renderProp('r')(NaN);
+        });
+
+        it('works with arrays', () => {
+          const wrapper = shallow(<MyComponent val={[]} />);
+
+          wrapper.find(ComponentWithRenderProp).renderProp('r')([]);
+
+          wrapper.find(ComponentWithRenderProp).renderProp('r')(['a']);
+
+          wrapper.find(ComponentWithRenderProp).renderProp('r')([Infinity]);
+        });
+
+        it('works with false', () => {
+          const wrapper = shallow(<MyComponent val={false} />);
+
+          wrapper.find(ComponentWithRenderProp).renderProp('r')(false);
+        });
+
+        it('throws with true', () => {
+          const wrapper = shallow(<MyComponent val={false} />);
+
+          expect(() => wrapper.find(ComponentWithRenderProp).renderProp('r')(true).shallow()).to.throw();
+        });
+      });
+    });
 
   describe('lifecycle methods', () => {
     describe('disableLifecycleMethods option', () => {
@@ -5911,7 +6271,7 @@ describe('shallow', () => {
         ]);
       });
 
-      it('calls GDSFP when expected', () => {
+      it('calls gDSFP when expected', () => {
         const prevProps = { a: 1 };
         const state = { state: true };
         const wrapper = shallow(<GDSFP {...prevProps} />);
@@ -5958,6 +6318,35 @@ describe('shallow', () => {
           }],
         ]);
       });
+
+      it('cDU’s nextState differs from `this.state` when gDSFP returns new state', () => {
+        class SimpleComponent extends React.Component {
+          constructor(props) {
+            super(props);
+            this.state = { value: props.value };
+          }
+
+          static getDerivedStateFromProps(props, state) {
+            return props.value === state.value ? null : { value: props.value };
+          }
+
+          shouldComponentUpdate(nextProps, nextState) {
+            return nextState.value !== this.state.value;
+          }
+
+          render() {
+            const { value } = this.state;
+            return (<input value={value} />);
+          }
+        }
+        const wrapper = shallow(<SimpleComponent value="initial" />);
+
+        expect(wrapper.find('input').prop('value')).to.equal('initial');
+
+        wrapper.setProps({ value: 'updated' });
+
+        expect(wrapper.find('input').prop('value')).to.equal('updated');
+      });
     });
 
     describeIf(is('>= 16'), 'componentDidCatch', () => {
@@ -5993,14 +6382,17 @@ describe('shallow', () => {
           }
 
           render() {
-            const { throws } = this.state;
+            const {
+              didThrow,
+              throws,
+            } = this.state;
             return (
               <div>
                 <MaybeFragment>
                   <span>
                     <Thrower throws={throws} />
                     <div>
-                      {this.state.didThrow ? 'HasThrown' : 'HasNotThrown'}
+                      {didThrow ? 'HasThrown' : 'HasNotThrown'}
                     </div>
                   </span>
                 </MaybeFragment>
@@ -6075,6 +6467,349 @@ describe('shallow', () => {
 
           expect(wrapper.find({ children: 'HasThrown' })).to.have.lengthOf(0);
           expect(wrapper.find({ children: 'HasNotThrown' })).to.have.lengthOf(1);
+        });
+      });
+    });
+
+    describeIf(is('>= 16.6'), 'getDerivedStateFromError', () => {
+      describe('errors inside an error boundary', () => {
+        const errorToThrow = new EvalError('threw an error!');
+
+        function Thrower({ throws }) {
+          if (throws) {
+            throw errorToThrow;
+          }
+          return null;
+        }
+
+        function getErrorBoundary() {
+          return class ErrorBoundary extends React.Component {
+            static getDerivedStateFromError() {
+              return {
+                throws: false,
+                didThrow: true,
+              };
+            }
+
+            constructor(props) {
+              super(props);
+              this.state = {
+                throws: false,
+                didThrow: false,
+              };
+            }
+
+            render() {
+              const {
+                didThrow,
+                throws,
+              } = this.state;
+
+              return (
+                <div>
+                  <Fragment>
+                    <span>
+                      <Thrower throws={throws} />
+                      <div>
+                        {didThrow ? 'HasThrown' : 'HasNotThrown'}
+                      </div>
+                    </span>
+                  </Fragment>
+                </div>
+              );
+            }
+          };
+        }
+
+        describe('Thrower', () => {
+          it('does not throw when `throws` is `false`', () => {
+            expect(() => shallow(<Thrower throws={false} />)).not.to.throw();
+          });
+
+          it('throws when `throws` is `true`', () => {
+            expect(() => shallow(<Thrower throws />)).to.throw();
+          });
+        });
+
+        it('catches a simulated error', () => {
+          const ErrorBoundary = getErrorBoundary();
+
+          const spy = sinon.spy(ErrorBoundary, 'getDerivedStateFromError');
+          const wrapper = shallow(<ErrorBoundary />);
+
+          expect(spy).to.have.property('callCount', 0);
+
+          expect(() => wrapper.find(Thrower).simulateError(errorToThrow)).not.to.throw();
+
+          expect(spy).to.have.property('callCount', 1);
+
+          expect(spy.args).to.be.an('array').and.have.lengthOf(1);
+          const [[actualError]] = spy.args;
+          expect(actualError).to.equal(errorToThrow);
+        });
+
+        it('rerenders on a simulated error', () => {
+          const ErrorBoundary = getErrorBoundary();
+
+          const wrapper = shallow(<ErrorBoundary />);
+
+          expect(wrapper.find({ children: 'HasThrown' })).to.have.lengthOf(0);
+          expect(wrapper.find({ children: 'HasNotThrown' })).to.have.lengthOf(1);
+
+          expect(() => wrapper.find(Thrower).simulateError(errorToThrow)).not.to.throw();
+
+          expect(wrapper.find({ children: 'HasThrown' })).to.have.lengthOf(1);
+          expect(wrapper.find({ children: 'HasNotThrown' })).to.have.lengthOf(0);
+        });
+
+        it('does not catch errors during shallow render', () => {
+          const ErrorBoundary = getErrorBoundary();
+
+          const spy = sinon.spy(ErrorBoundary, 'getDerivedStateFromError');
+          const wrapper = shallow(<ErrorBoundary />);
+
+          expect(spy).to.have.property('callCount', 0);
+
+          wrapper.setState({ throws: true });
+
+          expect(spy).to.have.property('callCount', 0);
+
+          const thrower = wrapper.find(Thrower);
+          expect(thrower).to.have.lengthOf(1);
+          expect(thrower.props()).to.have.property('throws', true);
+
+          expect(() => thrower.dive()).to.throw(errorToThrow);
+
+          expect(spy).to.have.property('callCount', 0);
+
+          expect(wrapper.find({ children: 'HasThrown' })).to.have.lengthOf(0);
+          expect(wrapper.find({ children: 'HasNotThrown' })).to.have.lengthOf(1);
+        });
+      });
+    });
+
+    describeIf(is('>= 16.6'), 'getDerivedStateFromError and componentDidCatch combined', () => {
+
+      const errorToThrow = new EvalError('threw an error!');
+      const expectedInfo = {
+        componentStack: `
+    in Thrower (created by ErrorBoundary)
+    in div (created by ErrorBoundary)
+    in ErrorBoundary (created by WrapperComponent)
+    in WrapperComponent`,
+      };
+
+      function Thrower({ throws }) {
+        if (throws) {
+          throw errorToThrow;
+        }
+        return null;
+      }
+
+      describe('errors inside error boundary when getDerivedStateFromProps returns update', () => {
+        let lifecycleSpy;
+        let stateSpy;
+
+        beforeEach(() => {
+          lifecycleSpy = sinon.spy();
+          stateSpy = sinon.spy();
+        });
+
+        class ErrorBoundary extends React.Component {
+          static getDerivedStateFromError(error) {
+            lifecycleSpy('getDerivedStateFromError', error);
+            return {
+              didThrow: true,
+              throws: false,
+            };
+          }
+
+          constructor(props) {
+            super(props);
+            this.state = {
+              didThrow: false,
+              throws: false,
+            };
+
+            lifecycleSpy('constructor');
+          }
+
+          componentDidCatch(error, info) {
+            lifecycleSpy('componentDidCatch', error, info);
+            stateSpy({ ...this.state });
+          }
+
+          render() {
+            lifecycleSpy('render');
+
+            const {
+              throws,
+            } = this.state;
+
+            return (
+              <div>
+                <Thrower throws={throws} />
+              </div>
+            );
+          }
+        }
+
+        it('does not catch errors during shallow render', () => {
+          const wrapper = shallow(<ErrorBoundary />);
+
+          expect(lifecycleSpy).to.have.property('callCount', 2);
+          expect(lifecycleSpy.args).to.deep.equal([
+            ['constructor'],
+            ['render'],
+          ]);
+
+          expect(stateSpy).to.have.property('callCount', 0);
+
+          lifecycleSpy.resetHistory();
+
+          wrapper.setState({ throws: true });
+
+          const thrower = wrapper.find(Thrower);
+          expect(thrower).to.have.lengthOf(1);
+          expect(thrower.props()).to.have.property('throws', true);
+
+          expect(() => thrower.dive()).to.throw(errorToThrow);
+
+          expect(lifecycleSpy).to.have.property('callCount', 1);
+          expect(lifecycleSpy.args).to.deep.equal([
+            ['render'],
+          ]);
+        });
+
+        it('calls getDerivedStateFromError first and then componentDidCatch for simulated error', () => {
+          const wrapper = shallow(<ErrorBoundary />);
+
+          expect(lifecycleSpy).to.have.property('callCount', 2);
+          expect(lifecycleSpy.args).to.deep.equal([
+            ['constructor'],
+            ['render'],
+          ]);
+
+          expect(stateSpy).to.have.property('callCount', 0);
+
+          lifecycleSpy.resetHistory();
+
+          expect(() => wrapper.find(Thrower).simulateError(errorToThrow)).not.to.throw();
+
+          expect(lifecycleSpy).to.have.property('callCount', 3);
+          expect(lifecycleSpy.args).to.deep.equal([
+            ['getDerivedStateFromError', errorToThrow],
+            ['render'],
+            ['componentDidCatch', errorToThrow, expectedInfo],
+          ]);
+
+          expect(stateSpy).to.have.property('callCount', 1);
+          expect(stateSpy.args).to.deep.equal([
+            [{
+              throws: false,
+              didThrow: true,
+            }],
+          ]);
+        });
+      });
+
+      describe('errors inside error boundary when getDerivedStateFromError does not return update', () => {
+        let spy;
+
+        beforeEach(() => {
+          spy = sinon.spy();
+        });
+
+        class ErrorBoundary extends React.Component {
+          static getDerivedStateFromError(error) {
+            spy('getDerivedStateFromError', error);
+            return null;
+          }
+
+          constructor(props) {
+            super(props);
+            this.state = {
+              didThrow: false,
+              throws: false,
+            };
+
+            spy('constructor');
+          }
+
+          componentDidCatch(error, info) {
+            spy('componentDidCatch', error, info);
+
+            this.setState({
+              didThrow: true,
+              throws: false,
+            });
+          }
+
+          render() {
+            spy('render');
+
+            const {
+              didThrow,
+              throws,
+            } = this.state;
+
+            return (
+              <div>
+                <Thrower throws={throws} />
+                <div>
+                  {didThrow ? 'HasThrown' : 'HasNotThrown'}
+                </div>
+              </div>
+            );
+          }
+        }
+
+        it('does not catch errors during shallow render', () => {
+          const wrapper = shallow(<ErrorBoundary />);
+
+          expect(spy).to.have.property('callCount', 2);
+          expect(spy.args).to.deep.equal([
+            ['constructor'],
+            ['render'],
+          ]);
+
+          spy.resetHistory();
+
+          wrapper.setState({ throws: true });
+
+          const thrower = wrapper.find(Thrower);
+          expect(thrower).to.have.lengthOf(1);
+          expect(thrower.props()).to.have.property('throws', true);
+
+          expect(() => thrower.dive()).to.throw(errorToThrow);
+
+          expect(spy).to.have.property('callCount', 1);
+          expect(spy.args).to.deep.equal([
+            ['render'],
+          ]);
+        });
+
+        it('rerenders on a simulated error', () => {
+          const wrapper = shallow(<ErrorBoundary />);
+
+          expect(spy).to.have.property('callCount', 2);
+          expect(spy.args).to.deep.equal([
+            ['constructor'],
+            ['render'],
+          ]);
+
+          spy.resetHistory();
+
+          const thrower = wrapper.find(Thrower);
+
+          expect(() => thrower.simulateError(errorToThrow)).not.to.throw(errorToThrow);
+
+          expect(spy).to.have.property('callCount', 3);
+          expect(spy.args).to.deep.equal([
+            ['getDerivedStateFromError', errorToThrow],
+            ['componentDidCatch', errorToThrow, expectedInfo],
+            ['render'],
+          ]);
         });
       });
     });
@@ -6996,6 +7731,125 @@ describe('shallow', () => {
         wrapper.instance().setDeepDifferentState();
         expect(updateSpy).to.have.property('callCount', 1);
       });
+
+      describeIf(is('>= 16.3'), 'setProps calls `componentDidUpdate` when `getDerivedStateFromProps` is defined', () => {
+        class DummyComp extends PureComponent {
+          constructor(...args) {
+            super(...args);
+            this.state = { state: -1 };
+          }
+
+          static getDerivedStateFromProps({ changeState, counter }) {
+            return changeState ? { state: counter * 10 } : null;
+          }
+
+          componentDidUpdate() {}
+
+          render() {
+            const { counter } = this.props;
+            const { state } = this.state;
+            return (
+              <p>
+                {counter}
+                {state}
+              </p>
+            );
+          }
+        }
+
+        const cDU = sinon.spy(DummyComp.prototype, 'componentDidUpdate');
+        const gDSFP = sinon.spy(DummyComp, 'getDerivedStateFromProps');
+
+        beforeEach(() => { // eslint-disable-line mocha/no-sibling-hooks
+          cDU.resetHistory();
+          gDSFP.resetHistory();
+        });
+
+        it('with no state changes, calls both methods with a sync and async setProps', () => {
+          const wrapper = shallow(<DummyComp changeState={false} counter={0} />);
+
+          expect(gDSFP).to.have.property('callCount', 1);
+          const [firstCall] = gDSFP.args;
+          expect(firstCall).to.eql([{
+            changeState: false,
+            counter: 0,
+          }, {
+            state: -1,
+          }]);
+          expect(wrapper.state()).to.eql({ state: -1 });
+
+          wrapper.setProps({ counter: 1 });
+
+          expect(cDU).to.have.property('callCount', 1);
+          expect(gDSFP).to.have.property('callCount', 2);
+          const [, secondCall] = gDSFP.args;
+          expect(secondCall).to.eql([{
+            changeState: false,
+            counter: 1,
+          }, {
+            state: -1,
+          }]);
+          expect(wrapper.state()).to.eql({ state: -1 });
+
+          return new Promise((resolve) => {
+            wrapper.setProps({ counter: 2 }, resolve);
+          }).then(() => {
+            expect(cDU).to.have.property('callCount', 2);
+            expect(gDSFP).to.have.property('callCount', 3);
+            const [, , thirdCall] = gDSFP.args;
+            expect(thirdCall).to.eql([{
+              changeState: false,
+              counter: 2,
+            }, {
+              state: -1,
+            }]);
+            expect(wrapper.state()).to.eql({ state: -1 });
+          });
+        });
+
+        it('with a state changes, calls both methods with a sync and async setProps', () => {
+          const wrapper = shallow(<DummyComp changeState counter={0} />);
+
+          expect(cDU).to.have.property('callCount', 0);
+          expect(gDSFP).to.have.property('callCount', 1);
+          const [firstCall] = gDSFP.args;
+          expect(firstCall).to.eql([{
+            changeState: true,
+            counter: 0,
+          }, {
+            state: -1,
+          }]);
+          expect(wrapper.state()).to.eql({ state: 0 });
+
+          wrapper.setProps({ counter: 1 });
+
+          expect(cDU).to.have.property('callCount', 1);
+          expect(gDSFP).to.have.property('callCount', 2);
+          const [, secondCall] = gDSFP.args;
+          expect(secondCall).to.eql([{
+            changeState: true,
+            counter: 1,
+          }, {
+            state: 0,
+          }]);
+          expect(wrapper.state()).to.eql({ state: 10 });
+
+          return new Promise((resolve) => {
+            wrapper.setProps({ counter: 2 }, resolve);
+          }).then(() => {
+            expect(cDU).to.have.property('callCount', 2);
+            expect(gDSFP).to.have.property('callCount', 3);
+            const [, , thirdCall] = gDSFP.args;
+            expect(thirdCall).to.eql([{
+              changeState: true,
+              counter: 2,
+            }, {
+              state: 10,
+            }]);
+            expect(wrapper.state()).to.eql({ state: 20 });
+          });
+        });
+      });
     });
 
     describe('Own PureComponent implementation', () => {
@@ -7023,7 +7877,7 @@ describe('shallow', () => {
           }
         }
         const spy = sinon.spy(Foo.prototype, 'componentDidUpdate');
-        const wrapper = mount(<Foo id={1} />);
+        const wrapper = shallow(<Foo id={1} />);
         wrapper.setState({ foo: 'update' });
         expect(spy).to.have.property('callCount', 1);
         wrapper.setState({ foo: 'update' });
@@ -7540,7 +8394,7 @@ describe('shallow', () => {
           expect(wrapper.name()).to.equal('CustomWrapper');
         });
 
-        describeIf(is('> 0.13'), 'stateless function components', () => {
+        describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
           it('returns the name of the node', () => {
             function SFC() {
               return <div />;
@@ -7609,7 +8463,7 @@ describe('shallow', () => {
           expect(wrapper.name()).to.equal('Foo');
         });
 
-        describeIf(is('> 0.13'), 'stateless function components', () => {
+        describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
           it('returns the name of the node', () => {
             function SFC() {
               return <div />;

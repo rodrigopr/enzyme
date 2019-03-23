@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const spawn = require('child_process').spawn;
 const rimraf = require('rimraf');
+const semver = require('semver');
 
 const promisify = fn => new Promise((res, rej) => {
   const done = (err, val) => (err ? rej(err) : res(val));
@@ -12,16 +13,33 @@ const promisify = fn => new Promise((res, rej) => {
 const getFile = fpath => promisify(cb => fs.readFile(fpath, 'utf8', cb));
 // const getFiles = fpath => promisify(cb => fs.readdir(fpath, cb));
 const getJSON = fpath => getFile(fpath).then(json => JSON.parse(json));
-const writeFile = (fpath, src) => promisify(cb => fs.writeFile(fpath, src, cb));
+const writeFile = (fpath, src) => promisify((cb) => {
+  console.log('writeFile', fpath, src);
+  if (process.env.DEBUG) {
+    cb();
+  } else {
+    fs.writeFile(fpath, src, cb);
+  }
+});
 const writeJSON = (fpath, json, pretty = false) => writeFile(
   fpath,
-  pretty
-    ? JSON.stringify(json, null, 2)
-    : JSON.stringify(json)
+  (pretty ? JSON.stringify(json, null, 2) : JSON.stringify(json)) + '\n'
 );
-const primraf = fpath => promisify(cb => rimraf(fpath, cb));
+const primraf = fpath => promisify((cb) => {
+  console.log('rimraf', fpath);
+  if (process.env.DEBUG) {
+    cb();
+  } else {
+    rimraf(fpath, cb);
+  }
+});
 const run = (cmd, ...args) => promisify((cb) => {
-  const child = spawn(cmd, args, { stdio: 'inherit' });
+  console.log(cmd + ' ' + args.join(' '));
+  const child = spawn(
+    process.env.DEBUG ? 'echo' : cmd,
+    process.env.DEBUG ? [cmd].concat(args) : args,
+    { stdio: 'inherit' }
+  );
   child.on('exit', cb);
 });
 
@@ -41,21 +59,37 @@ const version = process.argv[2];
 
 const root = process.cwd();
 
-const adapterVersions = {
-  '15.0': 15.4,
-  15.1: 15.4,
-  15.2: 15.4,
-  15.3: 15.4,
-  15.5: 15,
-  '16.0': 16.1,
-  16.4: 16,
-  16.5: 16,
-  16.6: 16,
-  16.7: 16,
-  16.8: 16,
-};
+function getAdapter(reactVersion) {
+  if (semver.intersects(reactVersion, '0.13.x')) {
+    return '13';
+  }
+  if (semver.intersects(reactVersion, '0.14.x')) {
+    return '14';
+  }
+  if (semver.intersects(reactVersion, '^15.0.0-0')) {
+    if (semver.intersects(reactVersion, '>= 15.5')) {
+      return '15';
+    }
+    return '15.4';
+  }
+  if (semver.intersects(reactVersion, '^16.0.0-0')) {
+    if (semver.intersects(reactVersion, '>= 16.4')) {
+      return '16';
+    }
+    if (semver.intersects(reactVersion, '~16.3')) {
+      return '16.3';
+    }
+    if (semver.intersects(reactVersion, '~16.2')) {
+      return '16.2';
+    }
+    if (semver.intersects(reactVersion, '~16.0 || ~16.1')) {
+      return '16.1';
+    }
+  }
+  return null;
+}
 const reactVersion = version < 15 ? '0.' + version : version;
-const adapterVersion = process.env.ADAPTER || adapterVersions[version] || version;
+const adapterVersion = process.env.ADAPTER || getAdapter(reactVersion) || version;
 const adapterName = `enzyme-adapter-react-${adapterVersion}`;
 const adapterPackageJsonPath = path.join(root, 'packages', adapterName, 'package.json');
 const testPackageJsonPath = path.join(root, 'packages', 'enzyme-test-suite', 'package.json');
@@ -93,6 +127,10 @@ Promise.resolve()
     const installs = Object.keys(peerDeps)
       .filter(key => !key.startsWith('enzyme'))
       .map(key => `${key}@${key.startsWith('react') ? reactVersion : peerDeps[key]}`);
+
+    if (process.env.RENDERER) {
+      installs.push(`react-test-renderer@${process.env.RENDERER}`);
+    }
 
     // eslint-disable-next-line no-param-reassign
     testJson.dependencies[adapterName] = adapterJson.version;

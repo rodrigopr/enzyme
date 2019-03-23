@@ -1,13 +1,14 @@
 /* eslint no-use-before-define: 0 */
-import functionName from 'function.prototype.name';
 import React from 'react';
 import ReactDOM from 'react-dom';
 // eslint-disable-next-line import/no-unresolved
 import ReactDOMServer from 'react-dom/server';
 // eslint-disable-next-line import/no-unresolved
 import ShallowRenderer from 'react-test-renderer/shallow';
+import { version as testRendererVersion } from 'react-test-renderer/package.json';
 // eslint-disable-next-line import/no-unresolved
 import TestUtils from 'react-dom/test-utils';
+import semver from 'semver';
 import checkPropTypes from 'prop-types/checkPropTypes';
 import {
   isElement,
@@ -23,6 +24,8 @@ import {
   ForwardRef,
   Profiler,
   Portal,
+  isMemo,
+  Memo,
 } from 'react-is';
 import { EnzymeAdapter } from 'enzyme';
 import { typeOfNode } from 'enzyme/build/Utils';
@@ -49,6 +52,9 @@ import detectFiberTags from './detectFiberTags';
 const is164 = !!TestUtils.Simulate.touchStart; // 16.4+
 const is165 = !!TestUtils.Simulate.auxClick; // 16.5+
 const is166 = is165 && !React.unstable_AsyncMode; // 16.6+
+const is168 = is166 && typeof TestUtils.act === 'function';
+
+const hasShouldComponentUpdateBug = semver.satisfies(testRendererVersion, '< 16.8');
 
 // Lazily populated if DOM is available.
 let FiberTags = null;
@@ -156,7 +162,26 @@ function toTree(vnode) {
         instance: null,
         rendered: childrenToTree(node.child),
       };
-
+    case FiberTags.MemoClass:
+      return {
+        nodeType: 'class',
+        type: node.elementType.type,
+        props: { ...node.memoizedProps },
+        key: ensureKeyOrUndefined(node.key),
+        ref: node.ref,
+        instance: node.stateNode,
+        rendered: childrenToTree(node.child.child),
+      };
+    case FiberTags.MemoSFC:
+      return {
+        nodeType: 'function',
+        type: node.elementType.type,
+        props: { ...node.memoizedProps },
+        key: ensureKeyOrUndefined(node.key),
+        ref: node.ref,
+        instance: null,
+        rendered: childrenToTree(node.child.child),
+      };
     case FiberTags.HostComponent: {
       let renderedNodes = flatten(nodeAndSiblingsArray(node.child).map(toTree));
       if (renderedNodes.length === 0) {
@@ -259,6 +284,15 @@ function getEmptyStateValue() {
   return testRenderer._instance.state;
 }
 
+function wrapAct(fn) {
+  if (!is168) {
+    return fn();
+  }
+  let returnVal;
+  TestUtils.act(() => { returnVal = fn(); });
+  return returnVal;
+}
+
 class ReactSixteenAdapter extends EnzymeAdapter {
   constructor() {
     super();
@@ -272,7 +306,9 @@ class ReactSixteenAdapter extends EnzymeAdapter {
         componentDidUpdate: {
           onSetState: true,
         },
-        getDerivedStateFromProps: true,
+        getDerivedStateFromProps: {
+          hasShouldComponentUpdateBug,
+        },
         getSnapshotBeforeUpdate: true,
         setState: {
           skipsComponentDidUpdateOnNullish: true,
@@ -280,6 +316,7 @@ class ReactSixteenAdapter extends EnzymeAdapter {
         getChildContext: {
           calledByRenderer: false,
         },
+        getDerivedStateFromError: is166,
       },
     };
   }
@@ -296,25 +333,27 @@ class ReactSixteenAdapter extends EnzymeAdapter {
     const adapter = this;
     return {
       render(el, context, callback) {
-        if (instance === null) {
-          const { type, props, ref } = el;
-          const wrapperProps = {
-            Component: type,
-            props,
-            context,
-            ...(ref && { ref }),
-          };
-          const ReactWrapperComponent = createMountWrapper(el, { ...options, adapter });
-          const wrappedEl = React.createElement(ReactWrapperComponent, wrapperProps);
-          instance = hydrateIn
-            ? ReactDOM.hydrate(wrappedEl, domNode)
-            : ReactDOM.render(wrappedEl, domNode);
-          if (typeof callback === 'function') {
-            callback();
+        return wrapAct(() => {
+          if (instance === null) {
+            const { type, props, ref } = el;
+            const wrapperProps = {
+              Component: type,
+              props,
+              context,
+              ...(ref && { ref }),
+            };
+            const ReactWrapperComponent = createMountWrapper(el, { ...options, adapter });
+            const wrappedEl = React.createElement(ReactWrapperComponent, wrapperProps);
+            instance = hydrateIn
+              ? ReactDOM.hydrate(wrappedEl, domNode)
+              : ReactDOM.render(wrappedEl, domNode);
+            if (typeof callback === 'function') {
+              callback();
+            }
+          } else {
+            instance.setChildProps(el.props, context, callback);
           }
-        } else {
-          instance.setChildProps(el.props, context, callback);
-        }
+        });
       },
       unmount() {
         ReactDOM.unmountComponentAtNode(domNode);
@@ -324,8 +363,17 @@ class ReactSixteenAdapter extends EnzymeAdapter {
         return instance ? toTree(instance._reactInternalFiber).rendered : null;
       },
       simulateError(nodeHierarchy, rootNode, error) {
-        const { instance: catchingInstance } = nodeHierarchy
-          .find(x => x.instance && x.instance.componentDidCatch) || {};
+        const isErrorBoundary = ({ instance: elInstance, type }) => {
+          if (is166 && type && type.getDerivedStateFromError) {
+            return true;
+          }
+          return elInstance && elInstance.componentDidCatch;
+        };
+
+        const {
+          instance: catchingInstance,
+          type: catchingType,
+        } = nodeHierarchy.find(isErrorBoundary) || {};
 
         simulateError(
           error,
@@ -334,6 +382,7 @@ class ReactSixteenAdapter extends EnzymeAdapter {
           nodeHierarchy,
           nodeTypeFromType,
           adapter.displayNameOfNode,
+          is166 ? catchingType : undefined,
         );
       },
       simulateEvent(node, event, mock) {
@@ -374,6 +423,16 @@ class ReactSixteenAdapter extends EnzymeAdapter {
           );
 
           const context = getMaskedContext(Component.contextTypes, unmaskedContext);
+
+          if (!isStateful && isMemo(el.type)) {
+            const InnerComp = el.type.type;
+            const wrappedEl = Object.assign(
+              (...args) => InnerComp(...args), // eslint-disable-line new-cap
+              InnerComp,
+            );
+            return withSetStateAllowed(() => renderer.render({ ...el, type: wrappedEl }, context));
+          }
+
           if (!isStateful && typeof Component === 'function') {
             if (Component !== cachedComponent) {
               wrappedEl = Object.assign(
@@ -439,6 +498,7 @@ class ReactSixteenAdapter extends EnzymeAdapter {
           nodeHierarchy.concat(cachedNode),
           nodeTypeFromType,
           adapter.displayNameOfNode,
+          is166 ? cachedNode.type : undefined,
         );
       },
       simulateEvent(node, event, ...args) {
@@ -546,11 +606,12 @@ class ReactSixteenAdapter extends EnzymeAdapter {
     switch ($$typeofType) {
       case ContextConsumer || NaN: return 'ContextConsumer';
       case ContextProvider || NaN: return 'ContextProvider';
+      case Memo || NaN: return displayNameOfNode(type.type);
       case ForwardRef || NaN: {
         if (type.displayName) {
           return type.displayName;
         }
-        const name = type.render.displayName || functionName(type.render);
+        const name = displayNameOfNode({ type: type.render });
         return name ? `ForwardRef(${name})` : 'ForwardRef';
       }
       default: return displayNameOfNode(node);

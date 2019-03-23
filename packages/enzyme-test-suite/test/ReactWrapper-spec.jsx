@@ -11,6 +11,8 @@ import {
   render,
   ReactWrapper,
 } from 'enzyme';
+import mountEntry from 'enzyme/mount';
+import ReactWrapperEntry from 'enzyme/ReactWrapper';
 import {
   ITERATOR_SYMBOL,
   withSetStateAllowed,
@@ -29,7 +31,10 @@ import {
   createRef,
   Fragment,
   forwardRef,
+  memo,
   PureComponent,
+  useEffect,
+  useState,
 } from './_helpers/react-compat';
 import {
   describeWithDOM,
@@ -52,6 +57,11 @@ const getWrapperPropSelector = prop => x => x.prop(prop);
 const CALLING_SETSTATE_CALLBACK_WITH_UNDEFINED = is('^15.5');
 
 describeWithDOM('mount', () => {
+  describe('top level entry points', () => {
+    expect(mountEntry).to.equal(mount);
+    expect(ReactWrapperEntry).to.equal(ReactWrapper);
+  });
+
   describe('top level wrapper', () => {
     it('does what i expect', () => {
       class Box extends React.Component {
@@ -60,6 +70,7 @@ describeWithDOM('mount', () => {
           return <div className="box">{children}</div>;
         }
       }
+
       class Foo extends React.Component {
         render() {
           return (
@@ -83,6 +94,13 @@ describeWithDOM('mount', () => {
       expect(wrapper.children().type()).to.equal(Box);
       expect(wrapper.children().instance()).to.be.instanceOf(Box);
       expect(wrapper.children().props().bam).to.equal(true);
+    });
+
+    it('works with numeric literals', () => {
+      const wrapper = mount(<div>{50}</div>);
+      expect(wrapper.debug()).to.equal(`<div>
+  50
+</div>`);
     });
 
     it('calls ref', () => {
@@ -398,26 +416,6 @@ describeWithDOM('mount', () => {
         expect(wrapper.context().name).to.equal(context.name);
         expect(wrapper.context('name')).to.equal(context.name);
       });
-
-      itIf(is('< 16'), 'works with SFCs', () => {
-        const Foo = ({ foo }) => (
-          <div>
-            <div className="bar">bar</div>
-            <div className="qoo">{foo}</div>
-          </div>
-        );
-
-        Foo.contextTypes = {
-          _: PropTypes.string,
-        };
-
-        const wrapper = mount(<Foo foo="qux" />, {
-          context: {
-            _: 'foo',
-          },
-        });
-        expect(wrapper.context('_')).to.equal('foo');
-      });
     });
   });
 
@@ -461,6 +459,84 @@ describeWithDOM('mount', () => {
       expect(children.at(0).props().test).to.equal('123');
       expect(wrapper.find(TestItem)).to.have.lengthOf(3);
       expect(wrapper.find(TestItem).first().props().test).to.equal('123');
+    });
+
+    describeIf(is('>= 16.6'), 'React.memo', () => {
+      it('works with an SFC', () => {
+        const InnerComp = () => <div><span>Hello</span></div>;
+        const InnerFoo = ({ foo }) => (
+          <div>
+            <InnerComp />
+            <div className="bar">bar</div>
+            <div className="qoo">{foo}</div>
+          </div>
+        );
+        const Foo = memo(InnerFoo);
+
+        const wrapper = mount(<Foo foo="qux" />);
+        expect(wrapper.debug()).to.equal(`<InnerFoo foo="qux">
+  <InnerComp>
+    <div>
+      <span>
+        Hello
+      </span>
+    </div>
+  </InnerComp>
+  <div className="bar">
+    bar
+  </div>
+  <div className="qoo">
+    qux
+  </div>
+</InnerFoo>`);
+        expect(wrapper.find('InnerComp')).to.have.lengthOf(1);
+        expect(wrapper.find('.bar')).to.have.lengthOf(1);
+        expect(wrapper.find('.qoo').text()).to.equal('qux');
+      });
+
+      it('works with a class component', () => {
+        class InnerComp extends React.Component {
+          render() {
+            return <div><span>Hello</span></div>;
+          }
+        }
+
+        class Foo extends React.Component {
+          render() {
+            const { foo } = this.props;
+            return (
+              <div>
+                <InnerComp />
+                <div className="bar">bar</div>
+                <div className="qoo">{foo}</div>
+              </div>
+            );
+          }
+        }
+        const FooMemo = memo(Foo);
+
+        const wrapper = mount(<FooMemo foo="qux" />);
+        expect(wrapper.debug()).to.equal(`<Foo foo="qux">
+  <div>
+    <InnerComp>
+      <div>
+        <span>
+          Hello
+        </span>
+      </div>
+    </InnerComp>
+    <div className="bar">
+      bar
+    </div>
+    <div className="qoo">
+      qux
+    </div>
+  </div>
+</Foo>`);
+        expect(wrapper.find('InnerComp')).to.have.lengthOf(1);
+        expect(wrapper.find('.bar')).to.have.lengthOf(1);
+        expect(wrapper.find('.qoo').text()).to.equal('qux');
+      });
     });
   });
 
@@ -558,6 +634,42 @@ describeWithDOM('mount', () => {
     </div>
   </Portal>
 </Foo>`);
+    });
+  });
+
+  describeIf(is('>= 16.8'), 'hooks', () => {
+    it('works with `useEffect`', (done) => {
+      function ComponentUsingEffectHook() {
+        const [ctr, setCtr] = useState(0);
+        useEffect(() => {
+          setCtr(1);
+          setTimeout(() => {
+            setCtr(2);
+          }, 1e3);
+        }, []);
+        return (
+          <div>
+            {ctr}
+          </div>
+        );
+      }
+      const wrapper = mount(<ComponentUsingEffectHook />);
+
+      expect(wrapper.debug()).to.equal(`<ComponentUsingEffectHook>
+  <div>
+    1
+  </div>
+</ComponentUsingEffectHook>`);
+
+      setTimeout(() => {
+        wrapper.update();
+        expect(wrapper.debug()).to.equal(`<ComponentUsingEffectHook>
+  <div>
+    2
+  </div>
+</ComponentUsingEffectHook>`);
+        done();
+      }, 1e3);
     });
   });
 
@@ -1305,7 +1417,7 @@ describeWithDOM('mount', () => {
       expect(wrapper.find('[data-foo="bar  baz quz"]')).to.have.lengthOf(0);
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('finds a component based on a constructor', () => {
         const Foo = () => <div />;
         const wrapper = mount((
@@ -2370,8 +2482,8 @@ describeWithDOM('mount', () => {
       ]);
     });
 
-    describe('setProps should not call componentDidUpdate twice', () => {
-      it('first test case', () => {
+    describe('setProps does not call componentDidUpdate twice', () => {
+      it('when setState is called in cWRP', () => {
         class Dummy extends React.Component {
           constructor(...args) {
             super(...args);
@@ -2410,7 +2522,7 @@ describeWithDOM('mount', () => {
       });
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('sets props for a component multiple times', () => {
         const Foo = props => (
           <div className={props.id}>
@@ -2522,7 +2634,7 @@ describeWithDOM('mount', () => {
       );
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('sets context for a component multiple times', () => {
         const SimpleComponent = (props, context) => (
           <div>{context.name}</div>
@@ -2995,7 +3107,7 @@ describeWithDOM('mount', () => {
           expect(wrapper.state()).to.eql({ id: 'bar' });
           expect(this).to.equal(wrapper.instance());
           expect(this.state).to.eql({ id: 'bar' });
-          expect(wrapper.find('div').prop('className')).to.eql('bar');
+          expect(wrapper.find('div').prop('className')).to.equal('bar');
           expect(args).to.eql(CALLING_SETSTATE_CALLBACK_WITH_UNDEFINED ? [undefined] : []);
           resolve();
         });
@@ -3145,7 +3257,7 @@ describeWithDOM('mount', () => {
     });
 
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('throws when trying to access state', () => {
         const Foo = () => (
           <div>abc</div>
@@ -3273,45 +3385,49 @@ describeWithDOM('mount', () => {
         }
       }
 
-      it('sets the state of the parent', () => {
+      it('sets the state of a stateful root', () => {
         const wrapper = mount(<Parent />);
 
-        expect(wrapper.text().trim()).to.eql('1 - a');
+        expect(wrapper.text().trim()).to.equal('1 - a');
 
         return new Promise((resolve) => {
           wrapper.setState({ childProp: 2 }, () => {
-            expect(wrapper.text().trim()).to.eql('2 - a');
+            expect(wrapper.text().trim()).to.equal('2 - a');
             resolve();
           });
         });
       });
 
-      it('sets the state of the child', () => {
+      it('sets the state of the stateful child of a stateful root', () => {
         const wrapper = mount(<Parent />);
 
-        expect(wrapper.text().trim()).to.eql('1 - a');
+        expect(wrapper.text().trim()).to.equal('1 - a');
 
+        const child = wrapper.find(Child);
         return new Promise((resolve) => {
-          wrapper.find(Child).setState({ state: 'b' }, () => {
-            expect(wrapper.text().trim()).to.eql('1 - b');
+          child.setState({ state: 'b' }, () => {
+            expect(wrapper.text().trim()).to.equal('1 - b');
             resolve();
           });
         });
       });
 
-      itIf(is('> 0.13'), 'sets the state of a class child with a root SFC', () => {
+      describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
         function SFC(props) {
           return <Parent {...props} />;
         }
 
-        const wrapper = mount(<SFC />);
+        it('sets the state of the stateful child of a stateless root', () => {
+          const wrapper = mount(<SFC />);
 
-        expect(wrapper.text().trim()).to.eql('1 - a');
+          expect(wrapper.text().trim()).to.equal('1 - a');
 
-        return new Promise((resolve) => {
-          wrapper.find(Child).setState({ state: 'b' }, () => {
-            expect(wrapper.text().trim()).to.eql('1 - b');
-            resolve();
+          const child = wrapper.find(Child);
+          return new Promise((resolve) => {
+            child.setState({ state: 'b' }, () => {
+              expect(wrapper.text().trim()).to.equal('1 - b');
+              resolve();
+            });
           });
         });
       });
@@ -3483,7 +3599,7 @@ describeWithDOM('mount', () => {
       expect(wrapper.isEmptyRender()).to.equal(false);
     });
 
-    describeIf(is('>=15 || ^16.0.0-alpha'), 'stateless function components', () => {
+    describeIf(is('>=15 || ^16.0.0-alpha'), 'stateless function components (SFCs)', () => {
       itWithData(emptyRenderValues, 'when a component returns: ', (data) => {
         function Foo() {
           return data.value;
@@ -3686,7 +3802,7 @@ describeWithDOM('mount', () => {
       ]);
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('handles nodes with mapped children', () => {
         const Foo = props => (
           <div>
@@ -3773,6 +3889,28 @@ describeWithDOM('mount', () => {
         expect(constWrapper.text()).to.include('Foo');
         expect(constWrapper.text()).to.include('Bar');
       });
+
+      it('works with a nested component', () => {
+        const Title = ({ children }) => <span>{children}</span>;
+        const Foobar = () => (
+          <Fragment>
+            <Title>Foo</Title>
+            <Fragment>Bar</Fragment>
+          </Fragment>
+        );
+
+        const wrapper = mount(<Foobar />);
+        const text = wrapper.text();
+        expect(wrapper.debug()).to.equal(`<Foobar>
+  <Title>
+    <span>
+      Foo
+    </span>
+  </Title>
+  Bar
+</Foobar>`);
+        expect(text).to.equal('FooBar');
+      });
     });
   });
 
@@ -3818,7 +3956,7 @@ describeWithDOM('mount', () => {
       expect(wrapper.props()).to.eql({ bar: 'bye', foo: 'hi' });
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('called on root should return props of root node', () => {
         const Foo = ({ bar, foo }) => (
           <div className={bar} id={foo} />
@@ -3919,7 +4057,7 @@ describeWithDOM('mount', () => {
       expect(wrapper.prop('bar')).to.equal('bye');
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('returns props of root rendered node', () => {
         const Foo = ({ bar, foo }) => (
           <div className={bar} id={foo} />
@@ -3935,7 +4073,7 @@ describeWithDOM('mount', () => {
     });
   });
 
-  describe('.state(name)', () => {
+  describe('.state([name])', () => {
     it('returns the state object', () => {
       class Foo extends React.Component {
         constructor(props) {
@@ -3993,7 +4131,7 @@ describeWithDOM('mount', () => {
       expect(() => wrapper.state()).to.throw(Error, 'ReactWrapper::state() can only be called on class components');
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('throws on SFCs', () => {
         function Foo() {
           return <div />;
@@ -4034,16 +4172,30 @@ describeWithDOM('mount', () => {
         }
       }
 
-      it('gets the state of the parent', () => {
+      it('gets the state of a stateful parent', () => {
         const wrapper = mount(<Parent />);
 
         expect(wrapper.state()).to.eql({ childProp: 1 });
       });
 
-      it('gets the state of the child', () => {
+      it('gets the state of the stateful child of a stateful root', () => {
         const wrapper = mount(<Parent />);
 
-        expect(wrapper.find(Child).state()).to.eql({ state: 'a' });
+        const child = wrapper.find(Child);
+        expect(child.state()).to.eql({ state: 'a' });
+      });
+
+      describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
+        function StatelessParent(props) {
+          return <Child {...props} />;
+        }
+
+        it('gets the state of the stateful child of a stateless root', () => {
+          const wrapper = mount(<StatelessParent />);
+
+          const child = wrapper.find(Child);
+          expect(child.state()).to.eql({ state: 'a' });
+        });
       });
     });
   });
@@ -4127,7 +4279,7 @@ describeWithDOM('mount', () => {
       expect(children).to.have.lengthOf(1);
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('handles mixed children with and without arrays', () => {
         const Foo = props => (
           <div>
@@ -4491,7 +4643,7 @@ describeWithDOM('mount', () => {
   });
 
   describe('.hasClass(className)', () => {
-    context('When using a DOM component', () => {
+    context('when using a DOM component', () => {
       it('returns whether or not node has a certain class', () => {
         const wrapper = mount(<div className="foo bar baz some-long-string FoOo" />);
 
@@ -4525,7 +4677,7 @@ describeWithDOM('mount', () => {
       });
     });
 
-    context('When using a Composite class component', () => {
+    context('when using a Composite class component', () => {
       it('returns whether or not node has a certain class', () => {
         class Foo extends React.Component {
           render() {
@@ -4550,7 +4702,7 @@ describeWithDOM('mount', () => {
       });
     });
 
-    context('When using nested composite components', () => {
+    context('when using nested composite components', () => {
       it('returns whether or not node has a certain class', () => {
         class Foo extends React.Component {
           render() {
@@ -4582,7 +4734,7 @@ describeWithDOM('mount', () => {
       });
     });
 
-    context('When using a Composite component that renders null', () => {
+    context('when using a Composite component that renders null', () => {
       it('returns whether or not node has a certain class', () => {
         class Foo extends React.Component {
           render() {
@@ -4601,8 +4753,30 @@ describeWithDOM('mount', () => {
           return <div {...this.props} />;
         }
       }
-      const wrapper = mount(<Foo className={{ classA: true, classB: false }} />);
+      const obj = { classA: true, classB: false };
+      const wrapper = mount(<Foo className={obj} />);
       expect(wrapper.hasClass('foo')).to.equal(false);
+      expect(wrapper.hasClass('classA')).to.equal(false);
+      expect(wrapper.hasClass('classB')).to.equal(false);
+      expect(wrapper.hasClass(String(obj))).to.equal(true);
+    });
+
+    it('allows hyphens', () => {
+      const wrapper = mount(<div className="foo-bar" />);
+      expect(wrapper.hasClass('foo-bar')).to.equal(true);
+    });
+
+    it('works if className has a function in toString property', () => {
+      function classes() {}
+      classes.toString = () => 'foo-bar';
+      const wrapper = mount(<div className={classes} />);
+      expect(wrapper.hasClass('foo-bar')).to.equal(true);
+    });
+
+    it('works if searching with a RegExp', () => {
+      const wrapper = mount(<div className="ComponentName-classname-123" />);
+      expect(wrapper.hasClass(/(ComponentName)-(classname)-(\d+)/)).to.equal(true);
+      expect(wrapper.hasClass(/(ComponentName)-(other)-(\d+)/)).to.equal(false);
     });
   });
 
@@ -5193,7 +5367,7 @@ describeWithDOM('mount', () => {
       expect(wrapper.find(Foo).html()).to.equal('<div class="in-foo"></div>');
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('renders out nested composite components', () => {
         const Foo = () => <div className="in-foo" />;
         const Bar = () => (
@@ -5227,6 +5401,27 @@ describeWithDOM('mount', () => {
         </Fragment>
       );
 
+      class ClassChild extends React.Component {
+        render() {
+          return <div>Class child</div>;
+        }
+      }
+
+      function SFCChild() {
+        return <div>SFC child</div>;
+      }
+
+      class FragmentWithCustomChildClass extends React.Component {
+        render() {
+          return (
+            <Fragment>
+              <ClassChild />
+              <SFCChild />
+            </Fragment>
+          );
+        }
+      }
+
       it('correctly renders html for both children for class', () => {
         const classWrapper = mount(<FragmentClassExample />);
         expect(classWrapper.html()).to.equal('<div><span>Foo</span></div><div><span>Bar</span></div>');
@@ -5235,6 +5430,11 @@ describeWithDOM('mount', () => {
       it('correctly renders html for both children for const', () => {
         const constWrapper = mount(<FragmentConstExample />);
         expect(constWrapper.html()).to.equal('<div><span>Foo</span></div><div><span>Bar</span></div>');
+      });
+
+      it('correctly renders html for custom component children', () => {
+        const withChildrenWrapper = mount(<FragmentWithCustomChildClass />);
+        expect(withChildrenWrapper.html()).to.equal('<div>Class child</div><div>SFC child</div>');
       });
     });
   });
@@ -5296,7 +5496,7 @@ describeWithDOM('mount', () => {
       expect(renderedFoo.find('.in-bar')).to.have.lengthOf(0);
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('returns a cheerio wrapper around the current node', () => {
         const Foo = () => (
           <div className="in-foo" />
@@ -5321,51 +5521,10 @@ describeWithDOM('mount', () => {
     });
   });
 
-  describe('.renderProp()', () => {
-    it('returns a wrapper around the node returned from the render prop', () => {
-      class Foo extends React.Component {
-        render() {
-          return <div className="in-foo" />;
-        }
-      }
-      class Bar extends React.Component {
-        render() {
-          const { render: r } = this.props;
-          return <div className="in-bar">{r()}</div>;
-        }
-      }
-
-      const wrapperA = mount(<div><Bar render={() => <div><Foo /></div>} /></div>);
-      const renderPropWrapperA = wrapperA.find(Bar).renderProp('render')();
-      expect(renderPropWrapperA.find(Foo)).to.have.lengthOf(1);
-
-      const wrapperB = mount(<div><Bar render={() => <Foo />} /></div>);
-      const renderPropWrapperB = wrapperB.find(Bar).renderProp('render')();
-      expect(renderPropWrapperB.find(Foo)).to.have.lengthOf(1);
-
-      const stub = sinon.stub().returns(<div />);
-      const wrapperC = mount(<div><Bar render={stub} /></div>);
-      stub.resetHistory();
-      wrapperC.find(Bar).renderProp('render')('one', 'two');
-      expect(stub.args).to.deep.equal([['one', 'two']]);
-    });
-
-    it('throws on host elements', () => {
-      class Div extends React.Component {
-        render() {
-          const { children } = this.props;
-          return <div>{children}</div>;
-        }
-      }
-
-      const wrapper = mount(<Div />).childAt(0);
-      expect(wrapper.is('div')).to.equal(true);
-      expect(() => wrapper.renderProp('foo')).to.throw();
-    });
-
-    wrap()
-      .withOverride(() => getAdapter(), 'wrap', () => undefined)
-      .it('throws with a react adapter that lacks a `.wrap`', () => {
+  wrap()
+    .withConsoleThrows()
+    .describe('.renderProp()', () => {
+      it('returns a wrapper around the node returned from the render prop', () => {
         class Foo extends React.Component {
           render() {
             return <div className="in-foo" />;
@@ -5378,10 +5537,103 @@ describeWithDOM('mount', () => {
           }
         }
 
-        const wrapper = mount(<div><Bar render={() => <div><Foo /></div>} /></div>);
-        expect(() => wrapper.find(Bar).renderProp('render')).to.throw(RangeError);
+        const wrapperA = mount(<div><Bar render={() => <div><Foo /></div>} /></div>);
+        const renderPropWrapperA = wrapperA.find(Bar).renderProp('render')();
+        expect(renderPropWrapperA.find(Foo)).to.have.lengthOf(1);
+
+        const wrapperB = mount(<div><Bar render={() => <Foo />} /></div>);
+        const renderPropWrapperB = wrapperB.find(Bar).renderProp('render')();
+        expect(renderPropWrapperB.find(Foo)).to.have.lengthOf(1);
+
+        const stub = sinon.stub().returns(<div />);
+        const wrapperC = mount(<div><Bar render={stub} /></div>);
+        stub.resetHistory();
+        wrapperC.find(Bar).renderProp('render')('one', 'two');
+        expect(stub.args).to.deep.equal([['one', 'two']]);
       });
-  });
+
+      it('throws on host elements', () => {
+        class Div extends React.Component {
+          render() {
+            const { children } = this.props;
+            return <div>{children}</div>;
+          }
+        }
+
+        const wrapper = mount(<Div />).childAt(0);
+        expect(wrapper.is('div')).to.equal(true);
+        expect(() => wrapper.renderProp('foo')).to.throw();
+      });
+
+      wrap()
+        .withOverride(() => getAdapter(), 'wrap', () => undefined)
+        .it('throws with a react adapter that lacks a `.wrap`', () => {
+          class Foo extends React.Component {
+            render() {
+              return <div className="in-foo" />;
+            }
+          }
+          class Bar extends React.Component {
+            render() {
+              const { render: r } = this.props;
+              return <div className="in-bar">{r()}</div>;
+            }
+          }
+
+          const wrapper = mount(<div><Bar render={() => <div><Foo /></div>} /></div>);
+          expect(() => wrapper.find(Bar).renderProp('render')).to.throw(RangeError);
+        });
+
+      describeIf(is('>= 16'), 'allows non-nodes', () => {
+        function MyComponent({ val }) {
+          return <ComponentWithRenderProp val={val} r={x => x} />;
+        }
+
+        function ComponentWithRenderProp({ val, r }) {
+          return r(val);
+        }
+
+        it('works with strings', () => {
+          const wrapper = mount(<MyComponent val="foo" />);
+
+          wrapper.find(ComponentWithRenderProp).renderProp('r')('foo');
+
+          wrapper.find(ComponentWithRenderProp).renderProp('r')('');
+        });
+
+        it('works with numbers', () => {
+          const wrapper = mount(<MyComponent val={42} />);
+
+          wrapper.find(ComponentWithRenderProp).renderProp('r')(42);
+
+          wrapper.find(ComponentWithRenderProp).renderProp('r')(0);
+
+          wrapper.find(ComponentWithRenderProp).renderProp('r')(NaN);
+        });
+
+        it('works with arrays', () => {
+          const wrapper = mount(<MyComponent val={[]} />);
+
+          wrapper.find(ComponentWithRenderProp).renderProp('r')([]);
+
+          wrapper.find(ComponentWithRenderProp).renderProp('r')(['a']);
+
+          wrapper.find(ComponentWithRenderProp).renderProp('r')([Infinity]);
+        });
+
+        it('works with false', () => {
+          const wrapper = mount(<MyComponent val={false} />);
+
+          wrapper.find(ComponentWithRenderProp).renderProp('r')(false);
+        });
+
+        it('throws with true', () => {
+          const wrapper = mount(<MyComponent val={false} />);
+
+          expect(() => wrapper.find(ComponentWithRenderProp).renderProp('r')(true)).to.throw();
+        });
+      });
+    });
 
   describe('lifecycle methods', () => {
     describeIf(is('>= 16.3'), 'getDerivedStateFromProps', () => {
@@ -5557,7 +5809,7 @@ describeWithDOM('mount', () => {
         ]);
       });
 
-      it('calls GDSFP when expected', () => {
+      it('calls gDSFP when expected', () => {
         const prevProps = { a: 1 };
         const state = { state: true };
         const wrapper = mount(<GDSFP {...prevProps} />);
@@ -5604,6 +5856,35 @@ describeWithDOM('mount', () => {
           }],
         ]);
       });
+
+      it('cDU’s nextState differs from `this.state` when gDSFP returns new state', () => {
+        class SimpleComponent extends React.Component {
+          constructor(props) {
+            super(props);
+            this.state = { value: props.value };
+          }
+
+          static getDerivedStateFromProps(props, state) {
+            return props.value === state.value ? null : { value: props.value };
+          }
+
+          shouldComponentUpdate(nextProps, nextState) {
+            return nextState.value !== this.state.value;
+          }
+
+          render() {
+            const { value } = this.state;
+            return (<input value={value} />);
+          }
+        }
+        const wrapper = mount(<SimpleComponent value="initial" />);
+
+        expect(wrapper.find('input').prop('value')).to.equal('initial');
+
+        wrapper.setProps({ value: 'updated' });
+
+        expect(wrapper.find('input').prop('value')).to.equal('updated');
+      });
     });
 
     describeIf(is('>= 16'), 'componentDidCatch', () => {
@@ -5645,14 +5926,18 @@ describeWithDOM('mount', () => {
           }
 
           render() {
-            const { throws } = this.state;
+            const {
+              didThrow,
+              throws,
+            } = this.state;
+
             return (
               <div>
                 <MaybeFragment>
                   <span>
                     <Thrower throws={throws} />
                     <div>
-                      {this.state.didThrow ? 'HasThrown' : 'HasNotThrown'}
+                      {didThrow ? 'HasThrown' : 'HasNotThrown'}
                     </div>
                   </span>
                 </MaybeFragment>
@@ -5776,6 +6061,382 @@ describeWithDOM('mount', () => {
     in ErrorSFC (created by WrapperComponent)
     in WrapperComponent`,
           });
+        });
+      });
+    });
+
+    describeIf(is('>= 16.6'), 'getDerivedStateFromError', () => {
+      describe('errors inside an error boundary', () => {
+        const errorToThrow = new EvalError('threw an error!');
+
+        function Thrower({ throws }) {
+          if (throws) {
+            throw errorToThrow;
+          }
+          return null;
+        }
+
+        function getErrorBoundary() {
+          return class ErrorBoundary extends React.Component {
+            static getDerivedStateFromError() {
+              return {
+                throws: false,
+                didThrow: true,
+              };
+            }
+
+            constructor(props) {
+              super(props);
+              this.state = {
+                throws: false,
+                didThrow: false,
+              };
+            }
+
+            render() {
+              const {
+                didThrow,
+                throws,
+              } = this.state;
+
+              return (
+                <div>
+                  <Fragment>
+                    <span>
+                      <Thrower throws={throws} />
+                      <div>
+                        {didThrow ? 'HasThrown' : 'HasNotThrown'}
+                      </div>
+                    </span>
+                  </Fragment>
+                </div>
+              );
+            }
+          };
+        }
+
+        function ErrorSFC({ component }) {
+          return component();
+        }
+
+        describe('Thrower', () => {
+          it('does not throw when `throws` is `false`', () => {
+            expect(() => mount(<Thrower throws={false} />)).not.to.throw();
+          });
+
+          it('throws when `throws` is `true`', () => {
+            expect(() => mount(<Thrower throws />)).to.throw();
+            try {
+              mount(<Thrower throws />);
+              expect(true).to.equal(false, 'this line should not be reached');
+            } catch (error) {
+              expect(error).to.equal(errorToThrow);
+            }
+          });
+        });
+
+        it('catches a simulated error', () => {
+          const ErrorBoundary = getErrorBoundary();
+
+          const spy = sinon.spy(ErrorBoundary, 'getDerivedStateFromError');
+          const wrapper = mount(<ErrorBoundary />);
+
+          expect(spy).to.have.property('callCount', 0);
+
+          expect(() => wrapper.find(Thrower).simulateError(errorToThrow)).not.to.throw();
+
+          expect(spy).to.have.property('callCount', 1);
+
+          expect(spy.args).to.be.an('array').and.have.lengthOf(1);
+          const [[actualError]] = spy.args;
+          expect(actualError).to.equal(errorToThrow);
+        });
+
+        it('rerenders on a simulated error', () => {
+          const ErrorBoundary = getErrorBoundary();
+
+          const wrapper = mount(<ErrorBoundary />);
+
+          expect(wrapper.find({ children: 'HasThrown' })).to.have.lengthOf(0);
+          expect(wrapper.find({ children: 'HasNotThrown' })).to.have.lengthOf(1);
+
+          expect(() => wrapper.find(Thrower).simulateError(errorToThrow)).not.to.throw();
+
+          expect(wrapper.find({ children: 'HasThrown' })).to.have.lengthOf(1);
+          expect(wrapper.find({ children: 'HasNotThrown' })).to.have.lengthOf(0);
+        });
+
+        it('rerenders on a simulated error with an SFC root', () => {
+          const ErrorBoundary = getErrorBoundary();
+
+          const wrapper = mount(<ErrorSFC component={() => <ErrorBoundary />} />);
+
+          expect(wrapper.find({ children: 'HasThrown' })).to.have.lengthOf(0);
+          expect(wrapper.find({ children: 'HasNotThrown' })).to.have.lengthOf(1);
+
+          expect(() => wrapper.find(Thrower).simulateError(errorToThrow)).not.to.throw();
+
+          expect(wrapper.find({ children: 'HasThrown' })).to.have.lengthOf(1);
+          expect(wrapper.find({ children: 'HasNotThrown' })).to.have.lengthOf(0);
+        });
+
+        it('catches errors during render', () => {
+          const ErrorBoundary = getErrorBoundary();
+
+          const spy = sinon.spy(ErrorBoundary, 'getDerivedStateFromError');
+          const wrapper = mount(<ErrorBoundary />);
+
+          expect(spy).to.have.property('callCount', 0);
+
+          wrapper.setState({ throws: true });
+
+          expect(spy).to.have.property('callCount', 1);
+
+          expect(spy.args).to.be.an('array').and.have.lengthOf(1);
+          const [[actualError]] = spy.args;
+          expect(actualError).to.equal(errorToThrow);
+        });
+
+        it('works when the root is an SFC', () => {
+          const ErrorBoundary = getErrorBoundary();
+
+          const spy = sinon.spy(ErrorBoundary, 'getDerivedStateFromError');
+          const wrapper = mount(<ErrorSFC component={() => <ErrorBoundary />} />);
+
+          expect(spy).to.have.property('callCount', 0);
+
+          wrapper.find(ErrorBoundary).setState({ throws: true });
+
+          expect(spy).to.have.property('callCount', 1);
+
+          expect(spy.args).to.be.an('array').and.have.lengthOf(1);
+          const [[actualError]] = spy.args;
+          expect(actualError).to.equal(errorToThrow);
+        });
+      });
+    });
+
+    describeIf(is('>= 16.6'), 'getDerivedStateFromError and componentDidCatch combined', () => {
+
+      const errorToThrow = new EvalError('threw an error!');
+      const expectedInfo = {
+        componentStack: `
+    in Thrower (created by ErrorBoundary)
+    in div (created by ErrorBoundary)
+    in ErrorBoundary (created by WrapperComponent)
+    in WrapperComponent`,
+      };
+
+      function Thrower({ throws }) {
+        if (throws) {
+          throw errorToThrow;
+        }
+        return null;
+      }
+
+      describe('errors inside error boundary when getDerivedStateFromProps returns update', () => {
+        let lifecycleSpy;
+        let stateSpy;
+
+        beforeEach(() => {
+          lifecycleSpy = sinon.spy();
+          stateSpy = sinon.spy();
+        });
+
+        class ErrorBoundary extends React.Component {
+          static getDerivedStateFromError(error) {
+            lifecycleSpy('getDerivedStateFromError', error);
+            return {
+              didThrow: true,
+              throws: false,
+            };
+          }
+
+          constructor(props) {
+            super(props);
+            this.state = {
+              didThrow: false,
+              throws: false,
+            };
+
+            lifecycleSpy('constructor');
+          }
+
+          componentDidCatch(error, info) {
+            lifecycleSpy('componentDidCatch', error, info);
+            stateSpy({ ...this.state });
+          }
+
+          render() {
+            lifecycleSpy('render');
+
+            const {
+              throws,
+            } = this.state;
+
+            return (
+              <div>
+                <Thrower throws={throws} />
+              </div>
+            );
+          }
+        }
+
+        it('calls getDerivedStateFromError first and then componentDidCatch', () => {
+          const wrapper = mount(<ErrorBoundary />);
+
+          expect(lifecycleSpy).to.have.property('callCount', 2);
+          expect(lifecycleSpy.args).to.deep.equal([
+            ['constructor'],
+            ['render'],
+          ]);
+
+          expect(stateSpy).to.have.property('callCount', 0);
+
+          lifecycleSpy.resetHistory();
+
+          wrapper.setState({ throws: true });
+
+          expect(lifecycleSpy).to.have.property('callCount', 4);
+          expect(lifecycleSpy.args).to.deep.equal([
+            ['render'],
+            ['getDerivedStateFromError', errorToThrow],
+            ['render'],
+            ['componentDidCatch', errorToThrow, expectedInfo],
+          ]);
+
+          expect(stateSpy).to.have.property('callCount', 1);
+          expect(stateSpy.args).to.deep.equal([
+            [{
+              throws: false,
+              didThrow: true,
+            }],
+          ]);
+        });
+
+        it('calls getDerivedStateFromError first and then componentDidCatch on a simulated error', () => {
+          const wrapper = mount(<ErrorBoundary />);
+
+          expect(lifecycleSpy).to.have.property('callCount', 2);
+          expect(lifecycleSpy.args).to.deep.equal([
+            ['constructor'],
+            ['render'],
+          ]);
+
+          expect(stateSpy).to.have.property('callCount', 0);
+
+          lifecycleSpy.resetHistory();
+
+          expect(() => wrapper.find(Thrower).simulateError(errorToThrow)).not.to.throw();
+
+          expect(lifecycleSpy).to.have.property('callCount', 3);
+          expect(lifecycleSpy.args).to.deep.equal([
+            ['getDerivedStateFromError', errorToThrow],
+            ['render'],
+            ['componentDidCatch', errorToThrow, expectedInfo],
+          ]);
+
+          expect(stateSpy).to.have.property('callCount', 1);
+          expect(stateSpy.args).to.deep.equal([
+            [{
+              throws: false,
+              didThrow: true,
+            }],
+          ]);
+        });
+      });
+
+      describe('errors inside error boundary when getDerivedStateFromError does not return update', () => {
+        let spy;
+
+        beforeEach(() => {
+          spy = sinon.spy();
+        });
+
+        class ErrorBoundary extends React.Component {
+          static getDerivedStateFromError(error) {
+            spy('getDerivedStateFromError', error);
+            return null;
+          }
+
+          constructor(props) {
+            super(props);
+            this.state = {
+              didThrow: false,
+              throws: false,
+            };
+
+            spy('constructor');
+          }
+
+          componentDidCatch(error, info) {
+            spy('componentDidCatch', error, info);
+
+            this.setState({
+              didThrow: true,
+              throws: false,
+            });
+          }
+
+          render() {
+            spy('render');
+
+            const {
+              throws,
+              didThrow,
+            } = this.state;
+
+            return (
+              <div>
+                <Thrower throws={throws} />
+                <div>
+                  {didThrow ? 'HasThrown' : 'HasNotThrown'}
+                </div>
+              </div>
+            );
+          }
+        }
+
+        it('renders again without calling componentDidCatch and then fails', () => {
+          const wrapper = mount(<ErrorBoundary />);
+
+          expect(spy).to.have.property('callCount', 2);
+          expect(spy.args).to.deep.equal([
+            ['constructor'],
+            ['render'],
+          ]);
+
+          spy.resetHistory();
+
+          expect(() => wrapper.setState({ throws: true })).to.throw(errorToThrow);
+
+          expect(spy).to.have.property('callCount', 3);
+          expect(spy.args).to.deep.equal([
+            ['render'],
+            ['getDerivedStateFromError', errorToThrow],
+            ['render'],
+          ]);
+        });
+
+        it('renders again on simulated error', () => {
+          const wrapper = mount(<ErrorBoundary />);
+
+          expect(spy).to.have.property('callCount', 2);
+          expect(spy.args).to.deep.equal([
+            ['constructor'],
+            ['render'],
+          ]);
+
+          spy.resetHistory();
+
+          expect(() => wrapper.find(Thrower).simulateError(errorToThrow)).not.to.throw();
+
+          expect(spy).to.have.property('callCount', 3);
+          expect(spy.args).to.deep.equal([
+            ['getDerivedStateFromError', errorToThrow],
+            ['componentDidCatch', errorToThrow, expectedInfo],
+            ['render'],
+          ]);
         });
       });
     });
@@ -6693,6 +7354,125 @@ describeWithDOM('mount', () => {
         wrapper.instance().setDeepDifferentState();
         expect(updateSpy).to.have.property('callCount', 1);
       });
+
+      describeIf(is('>= 16.3'), 'setProps calls `componentDidUpdate` when `getDerivedStateFromProps` is defined', () => {
+        class DummyComp extends PureComponent {
+          constructor(...args) {
+            super(...args);
+            this.state = { state: -1 };
+          }
+
+          static getDerivedStateFromProps({ changeState, counter }) {
+            return changeState ? { state: counter * 10 } : null;
+          }
+
+          componentDidUpdate() {}
+
+          render() {
+            const { counter } = this.props;
+            const { state } = this.state;
+            return (
+              <p>
+                {counter}
+                {state}
+              </p>
+            );
+          }
+        }
+
+        const cDU = sinon.spy(DummyComp.prototype, 'componentDidUpdate');
+        const gDSFP = sinon.spy(DummyComp, 'getDerivedStateFromProps');
+
+        beforeEach(() => { // eslint-disable-line mocha/no-sibling-hooks
+          cDU.resetHistory();
+          gDSFP.resetHistory();
+        });
+
+        it('with no state changes, calls both methods with a sync and async setProps', () => {
+          const wrapper = mount(<DummyComp changeState={false} counter={0} />);
+
+          expect(cDU).to.have.property('callCount', 0);
+          expect(gDSFP).to.have.property('callCount', 1);
+          const [firstCall] = gDSFP.args;
+          expect(firstCall).to.eql([{
+            changeState: false,
+            counter: 0,
+          }, {
+            state: -1,
+          }]);
+          expect(wrapper.state()).to.eql({ state: -1 });
+
+          wrapper.setProps({ counter: 1 });
+
+          expect(cDU).to.have.property('callCount', 1);
+          expect(gDSFP).to.have.property('callCount', 2);
+          const [, secondCall] = gDSFP.args;
+          expect(secondCall).to.eql([{
+            changeState: false,
+            counter: 1,
+          }, {
+            state: -1,
+          }]);
+          expect(wrapper.state()).to.eql({ state: -1 });
+
+          return new Promise((resolve) => {
+            wrapper.setProps({ counter: 2 }, resolve);
+          }).then(() => {
+            expect(cDU).to.have.property('callCount', 2);
+            expect(gDSFP).to.have.property('callCount', 3);
+            const [, , thirdCall] = gDSFP.args;
+            expect(thirdCall).to.eql([{
+              changeState: false,
+              counter: 2,
+            }, {
+              state: -1,
+            }]);
+            expect(wrapper.state()).to.eql({ state: -1 });
+          });
+        });
+
+        it('with a state changes, calls both methods with a sync and async setProps', () => {
+          const wrapper = mount(<DummyComp changeState counter={0} />);
+
+          expect(gDSFP).to.have.property('callCount', 1);
+          const [firstCall] = gDSFP.args;
+          expect(firstCall).to.eql([{
+            changeState: true,
+            counter: 0,
+          }, {
+            state: -1,
+          }]);
+          expect(wrapper.state()).to.eql({ state: 0 });
+
+          wrapper.setProps({ counter: 1 });
+
+          expect(cDU).to.have.property('callCount', 1);
+          expect(gDSFP).to.have.property('callCount', 2);
+          const [, secondCall] = gDSFP.args;
+          expect(secondCall).to.eql([{
+            changeState: true,
+            counter: 1,
+          }, {
+            state: 0,
+          }]);
+          expect(wrapper.state()).to.eql({ state: 10 });
+
+          return new Promise((resolve) => {
+            wrapper.setProps({ counter: 2 }, resolve);
+          }).then(() => {
+            expect(cDU).to.have.property('callCount', 2);
+            expect(gDSFP).to.have.property('callCount', 3);
+            const [, , thirdCall] = gDSFP.args;
+            expect(thirdCall).to.eql([{
+              changeState: true,
+              counter: 2,
+            }, {
+              state: 10,
+            }]);
+            expect(wrapper.state()).to.eql({ state: 20 });
+          });
+        });
+      });
     });
 
     describe('Own PureComponent implementation', () => {
@@ -6870,7 +7650,7 @@ describeWithDOM('mount', () => {
       expect(document.body.childNodes).to.have.lengthOf(0);
     });
 
-    describeIf(is('> 0.13'), 'stateless function components', () => {
+    describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
       it('attaches and stuff', () => {
         const Foo = () => <div className="in-foo" />;
 
@@ -7407,7 +8187,7 @@ describeWithDOM('mount', () => {
           expect(wrapper.name()).to.equal('CustomWrapper');
         });
 
-        describeIf(is('> 0.13'), 'stateless function components', () => {
+        describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
           it('returns the name of the node', () => {
             function SFC() {
               return <div />;
@@ -7466,7 +8246,7 @@ describeWithDOM('mount', () => {
           expect(wrapper.name()).to.equal('Foo');
         });
 
-        describeIf(is('> 0.13'), 'stateless function components', () => {
+        describeIf(is('> 0.13'), 'stateless function components (SFCs)', () => {
           it('returns the name of the node', () => {
             function SFC() {
               return <div />;

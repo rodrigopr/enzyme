@@ -131,6 +131,10 @@ function getAdapterLifecycles({ options }) {
       }),
     }
     : null;
+  const { getDerivedStateFromProps: originalGDSFP } = lifecycles;
+  const getDerivedStateFromProps = originalGDSFP ? {
+    hasShouldComponentUpdateBug: !!originalGDSFP.hasShouldComponentUpdateBug,
+  } : false;
 
   return {
     ...lifecycles,
@@ -142,6 +146,7 @@ function getAdapterLifecycles({ options }) {
       ...lifecycles.getChildContext,
     },
     ...(componentDidUpdate && { componentDidUpdate }),
+    getDerivedStateFromProps,
   };
 }
 
@@ -243,6 +248,30 @@ function privateSetChildContext(adapter, wrapper, instance, renderedNode, getChi
   }
 }
 
+function mockSCUIfgDSFPReturnNonNull(node, state) {
+  const { getDerivedStateFromProps } = node.type;
+
+  if (typeof getDerivedStateFromProps === 'function') {
+    // we try to fix a React shallow renderer bug here.
+    // (facebook/react#14607, which has been fixed in react 16.8):
+    // when gDSFP return derived state, it will set instance state in shallow renderer before SCU,
+    // this will cause `this.state` in sCU be the updated state, which is wrong behavior.
+    // so we have to wrap sCU to pass the old state to original sCU.
+    const { instance } = node;
+    const { restore } = spyMethod(
+      instance,
+      'shouldComponentUpdate',
+      originalSCU => function shouldComponentUpdate(...args) {
+        instance.state = state;
+        const sCUResult = originalSCU.apply(instance, args);
+        const [, nextState] = args;
+        instance.state = nextState;
+        restore();
+        return sCUResult;
+      },
+    );
+  }
+}
 
 /**
  * @class ShallowWrapper
@@ -433,6 +462,7 @@ class ShallowWrapper {
         // this case, state will be undefined, but props/context will exist.
         const node = this[RENDERER].getNode();
         const instance = node.instance || {};
+        const type = node.type || {};
         const { state } = instance;
         const prevProps = instance.props || this[UNRENDERED].props;
         const prevContext = instance.context || this[OPTIONS].context;
@@ -452,6 +482,10 @@ class ShallowWrapper {
             && instance
           ) {
             if (typeof instance.shouldComponentUpdate === 'function') {
+              const { getDerivedStateFromProps: gDSFP } = lifecycles;
+              if (gDSFP && gDSFP.hasShouldComponentUpdateBug) {
+                mockSCUIfgDSFPReturnNonNull(node, state);
+              }
               shouldComponentUpdateSpy = spyMethod(instance, 'shouldComponentUpdate');
             }
             if (
@@ -489,7 +523,11 @@ class ShallowWrapper {
               if (
                 lifecycles.componentDidUpdate
                 && typeof instance.componentDidUpdate === 'function'
-                && (!state || shallowEqual(state, this.instance().state))
+                && (
+                  !state
+                  || shallowEqual(state, this.instance().state)
+                  || typeof type.getDerivedStateFromProps === 'function'
+                )
               ) {
                 instance.componentDidUpdate(prevProps, state, snapshot);
               }
@@ -601,6 +639,10 @@ class ShallowWrapper {
             && lifecycles.componentDidUpdate.onSetState
             && typeof instance.shouldComponentUpdate === 'function'
           ) {
+            const { getDerivedStateFromProps: gDSFP } = lifecycles;
+            if (gDSFP && gDSFP.hasShouldComponentUpdateBug) {
+              mockSCUIfgDSFPReturnNonNull(node, state);
+            }
             shouldComponentUpdateSpy = spyMethod(instance, 'shouldComponentUpdate');
           }
           if (
@@ -705,7 +747,7 @@ class ShallowWrapper {
   contains(nodeOrNodes) {
     const adapter = getAdapter(this[OPTIONS]);
     if (!isReactElementAlike(nodeOrNodes, adapter)) {
-      throw new Error('ShallowWrapper::contains() can only be called with ReactElement (or array of them), string or number as argument.');
+      throw new Error('ShallowWrapper::contains() can only be called with a ReactElement (or an array of them), a string, or a number as an argument.');
     }
     const predicate = Array.isArray(nodeOrNodes)
       ? other => containsChildrenSubArray(
@@ -1211,7 +1253,7 @@ class ShallowWrapper {
    * @returns {Boolean}
    */
   hasClass(className) {
-    if (className && className.indexOf('.') !== -1) {
+    if (typeof className === 'string' && className.indexOf('.') !== -1) {
       // eslint-disable-next-line no-console
       console.warn('It looks like you\'re calling `ShallowWrapper::hasClass()` with a CSS selector. hasClass() expects a class name, not a CSS selector.');
     }
